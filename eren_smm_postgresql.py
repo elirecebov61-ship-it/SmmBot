@@ -27,6 +27,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ===== PREMIUM EMOJİ YARDIMCISI =====
+def pe(emoji_id, fallback='⭐'):
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+# Premium emoji sabitleri
+E_CROSS    = pe('6224185666704511761', '❌')
+E_DIAMOND  = pe('5251562950698759162', '💎')
+E_USER     = pe('4967667085606912536', '👤')
+E_SHOP     = pe('4970023558068568720', '🛍')
+E_VIP      = pe('6266995104687330978', '👑')
+E_BONUS    = pe('5251562950698759162', '💎')   # Günlük bonus — diamond ile aynı
+E_ORDERS   = pe('5449683594425410231', '📦')
+E_TRANSFER = pe('5375338737028841420', '💰')
+E_REFERRAL = pe('6071278787947925866', '🤝')
+E_SUPPORT  = pe('5352759161945867747', '💬')
+E_HELP     = pe('5197269100878907942', '❓')
+E_LANG     = pe('5397575638146110953', '🌍')
+E_RAFFLE   = pe('6071123877067494706', '🎲')
+E_DONATE   = pe('5267102644886853973', '⭐')
+E_SUN      = pe('5402477260982731644', '🌞')
+E_BOT      = pe('5305444432118589379', '👾')
+
 # ===== DATABASE CONNECTION POOL =====
 db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, DATABASE_URL)
 
@@ -95,13 +117,11 @@ def init_db():
             referral_date TEXT
         )''')
 
-        # log_message_id sütunu yoxdursa əlavə et (köhnə DB-lər üçün)
         try:
             c.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS log_message_id BIGINT")
         except Exception:
             pass
 
-        # Köhnə DB-lər üçün doğrulama sütunları (yoxdursa əlavə et)
         try:
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE")
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_answer INTEGER")
@@ -121,16 +141,12 @@ def init_db():
 
         conn.commit()
         c.close()
-
-        # Default məhsulları əlavə et (yoxdursa)
         _seed_products(conn)
-
         logger.info("Database başlatıldı")
     finally:
         put_conn(conn)
 
 def _seed_products(conn):
-    """TikTok 10k İzlenme və Telegram 1k Abone məhsullarını əlavə et (yalnız boşdursa)"""
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
         c.execute("SELECT COUNT(*) as cnt FROM products")
@@ -157,325 +173,324 @@ except Exception as e:
 # ===== LANGUAGE =====
 LANG = {
     'TR': {
-        'welcome': '☀️ Merhaba\n\n👾 <b>Eren SMM TR</b>\nTürkiye\'nin güvenilir dijital ürün marketi.\n\nİşlem seçin:',
-        'balance': '💎 Bakiye',
-        'profile': '👤 Profilim',
-        'shop': '🛍️ Mağaza',
-        'vip_button': '👑 VIP Ol • 20 Referans',
-        'daily_bonus': '🎁 Günlük Bonus',
-        'orders': '📦 Siparişlerim',
-        'transfer': '💰 Puan Transferi',
+        'welcome': f'{E_SUN} Merhaba\n\n{E_BOT} <b>Eren SMM TR</b>\nTürkiye\'nin güvenilir dijital ürün marketi.\n\nİşlem seçin:',
+        'balance': f'{E_DIAMOND} Bakiye',
+        'profile': f'{E_USER} Profilim',
+        'shop': f'{E_SHOP} Mağaza',
+        'vip_button': f'{E_VIP} VIP Ol • 20 Referans',
+        'daily_bonus': f'{E_BONUS} Günlük Bonus',
+        'orders': f'{E_ORDERS} Siparişlerim',
+        'transfer': f'{E_TRANSFER} Puan Transferi',
         'coupon': '🎫 Kupon Kodu',
-        'referral': '🤝 Referans',
-        'support': '💬 Destek',
-        'help': '❓ Yardım',
-        'language': '🌍 Dil',
-        'raffle': '🎲 Çekiliş',
-        'donate': '⭐️ Bağış Yap',
+        'referral': f'{E_REFERRAL} Referans',
+        'support': f'{E_SUPPORT} Destek',
+        'help': f'{E_HELP} Yardım',
+        'language': f'{E_LANG} Dil',
+        'raffle': f'{E_RAFFLE} Çekiliş',
+        'donate': f'{E_DONATE} Bağış Yap',
         'back_to_menu': '← Ana Merkeze Dön',
 
         'profile_text': (
-            '👤 <b>Profil Özeti</b>\n\n'
-            '🆔 <b>Kullanıcı ID:</b> {user_id}\n'
-            '💎 <b>Cüzdan Bakiyesi:</b> {balance} Puan\n'
-            '🤝 <b>Davet Edilen:</b> {referrals} Kişi\n'
-            '💼 <b>Toplam Sipariş:</b> {orders}\n'
-            '📆 <b>Kayıt Tarihi:</b> {reg_date}\n\n'
-            '💡 VIP olarak: 2x Günlük Bonus, +2 Davet Puanı, VIP Mağazaya erişim!'
+            f'{E_USER} <b>Profil Özeti</b>\n\n'
+            f'🆔 <b>Kullanıcı ID:</b> {{user_id}}\n'
+            f'{E_DIAMOND} <b>Cüzdan Bakiyesi:</b> {{balance}} Puan\n'
+            f'{E_REFERRAL} <b>Davet Edilen:</b> {{referrals}} Kişi\n'
+            f'💼 <b>Toplam Sipariş:</b> {{orders}}\n'
+            f'📆 <b>Kayıt Tarihi:</b> {{reg_date}}\n\n'
+            f'💡 VIP olarak: 2x Günlük Bonus, +2 Davet Puanı, VIP Mağazaya erişim!'
         ),
 
         'daily_bonus_success': (
-            '🎁 <b>Günlük Bonus Alındı!</b>\n\n'
-            '➕ +1 Puan hesabınıza eklendi!\n'
-            '💎 Yeni Bakiye: {balance} Puan\n\n'
-            '👍 Bugünkü tüm bonus haklarını kullandın!'
+            f'{E_BONUS} <b>Günlük Bonus Alındı!</b>\n\n'
+            f'➕ +1 Puan hesabınıza eklendi!\n'
+            f'{E_DIAMOND} Yeni Bakiye: {{balance}} Puan\n\n'
+            f'👍 Bugünkü tüm bonus haklarını kullandın!'
         ),
         'daily_bonus_success_vip': (
-            '🎁 <b>Günlük Bonus Alındı!</b>\n\n'
-            '➕ +1 Puan hesabınıza eklendi!\n'
-            '💎 Yeni Bakiye: {balance} Puan\n\n'
-            '👑 VIP olarak bugün {used}/2 bonus hakkını kullandın!'
+            f'{E_BONUS} <b>Günlük Bonus Alındı!</b>\n\n'
+            f'➕ +1 Puan hesabınıza eklendi!\n'
+            f'{E_DIAMOND} Yeni Bakiye: {{balance}} Puan\n\n'
+            f'{E_VIP} VIP olarak bugün {{used}}/2 bonus hakkını kullandın!'
         ),
-        'daily_bonus_used': '⏳ Bugünkü bonus hakkını kullandın!\nYarın tekrar gel!',
+        'daily_bonus_used': f'⏳ Bugünkü bonus hakkını kullandın!\nYarın tekrar gel!',
 
-        'insufficient_balance': '❌ Yetersiz Bakiye!\nGerekli: {needed} Puan\nBakiyeniz: {balance} Puan',
+        'insufficient_balance': f'{E_CROSS} Yetersiz Bakiye!\nGerekli: {{needed}} Puan\nBakiyeniz: {{balance}} Puan',
 
         'transfer_info': (
-            '💰 <b>Puan Transfer Sistemi</b>\n\n'
-            '💎 <b>Bakiyeniz:</b> {balance} Puan\n'
-            '⏳ <b>Günlük Hak:</b> {daily_left}/2 kaldı\n\n'
-            '1️⃣ Her transferde bot <b>1 Puan</b> komisyon keser.\n'
-            '👤 Alıcı ID ve miktarı girerek transfer yapın.\n\n'
-            'Format: AlıcıID|Miktar\n'
-            'Örn: 1234567|10'
+            f'{E_TRANSFER} <b>Puan Transfer Sistemi</b>\n\n'
+            f'{E_DIAMOND} <b>Bakiyeniz:</b> {{balance}} Puan\n'
+            f'⏳ <b>Günlük Hak:</b> {{daily_left}}/2 kaldı\n\n'
+            f'1️⃣ Her transferde bot <b>1 Puan</b> komisyon keser.\n'
+            f'{E_USER} Alıcı ID ve miktarı girerek transfer yapın.\n\n'
+            f'Format: AlıcıID|Miktar\n'
+            f'Örn: 1234567|10'
         ),
         'transfer_prompt': (
-            '💰 <b>Transfer Bilgisi Girin</b>\n\n'
-            'Format: AlıcıID|Miktar\n'
-            'Örn: 1234567|10\n\n'
-            '⚠️ Bot <b>1 Puan</b> komisyon keser.\n'
-            '💎 <b>Bakiyeniz:</b> {balance} Puan\n\n'
-            'İptal: /iptal'
+            f'{E_TRANSFER} <b>Transfer Bilgisi Girin</b>\n\n'
+            f'Format: AlıcıID|Miktar\n'
+            f'Örn: 1234567|10\n\n'
+            f'⚠️ Bot <b>1 Puan</b> komisyon keser.\n'
+            f'{E_DIAMOND} <b>Bakiyeniz:</b> {{balance}} Puan\n\n'
+            f'İptal: /iptal'
         ),
         'transfer_cancelled': '⚠️ Transfer iptal edildi.',
-        'transfer_format_error': '❌ Hatalı format!\nDoğru format: AlıcıID|Miktar\nÖrn: 1234567|10',
-        'transfer_success': '✅ Transfer Başarılı!\n\n📤 {amount} Puan gönderdiniz\n👤 Alıcı: {receiver_id}\n💸 Komisyon: 1 Puan\n💎 Yeni Bakiye: {new_balance} Puan',
+        'transfer_format_error': f'{E_CROSS} Hatalı format!\nDoğru format: AlıcıID|Miktar\nÖrn: 1234567|10',
+        'transfer_success': f'✅ Transfer Başarılı!\n\n📤 {{amount}} Puan gönderdiniz\n{E_USER} Alıcı: {{receiver_id}}\n💸 Komisyon: 1 Puan\n{E_DIAMOND} Yeni Bakiye: {{new_balance}} Puan',
         'transfer_limit_reached': '⏳ Günlük transfer hakkınız bitti!\n\nGünde en fazla 2 transfer yapabilirsiniz. Yarın tekrar deneyin.',
 
-        'shop_welcome': '👋 <b>Normal Mağazaya Hoşgeldiniz!</b>\n\nBir kategori seçin:',
+        'shop_welcome': f'{E_SHOP} <b>Normal Mağazaya Hoşgeldiniz!</b>\n\nBir kategori seçin:',
         'tiktok_smm': '🎵 TikTok Smm',
         'telegram_smm': '📱 Telegram Smm',
-        'category_empty': '📦 {category}\n\nBu kategoride henüz ürün bulunmuyor.\nYakında eklenecek!',
+        'category_empty': f'{E_ORDERS} {{category}}\n\nBu kategoride henüz ürün bulunmuyor.\nYakında eklenecek!',
 
-        'vip_shop_welcome': '👑 <b>VIP Mağazaya Hoşgeldiniz!</b>\n\nÖzel VIP ürünleri:',
-        'vip_required_alert': '👑 Lütfen önce VIP olun!\nVIP mağazaya erişmek için VIP üyeliğiniz gerekiyor.',
+        'vip_shop_welcome': f'{E_VIP} <b>VIP Mağazaya Hoşgeldiniz!</b>\n\nÖzel VIP ürünleri:',
+        'vip_required_alert': f'{E_VIP} Lütfen önce VIP olun!\nVIP mağazaya erişmek için VIP üyeliğiniz gerekiyor.',
 
         'vip_purchase_text': (
-            '👍 <b>VIP Satın Al</b>\n\n'
-            'VIP olmak için <b>{required} referans</b> şart!\n\n'
-            '👍 Mevcut referansınız: <b>{current}/{required}</b>\n'
-            '👍 Eksik referans: <b>{missing} kişi</b> daha davet edin!\n\n'
-            '• 👍 <b>VIP Avantajları:</b>\n'
-            '• 👍 VIP Mağazaya erişim\n'
-            '• 👍 Günde 2 kez günlük bonus\n'
-            '• 👍 Her davette <b>+2 Puan</b>'
+            f'👍 <b>VIP Satın Al</b>\n\n'
+            f'VIP olmak için <b>{{required}} referans</b> şart!\n\n'
+            f'👍 Mevcut referansınız: <b>{{current}}/{{required}}</b>\n'
+            f'👍 Eksik referans: <b>{{missing}} kişi</b> daha davet edin!\n\n'
+            f'• 👍 <b>VIP Avantajları:</b>\n'
+            f'• {E_VIP} VIP Mağazaya erişim\n'
+            f'• {E_BONUS} Günde 2 kez günlük bonus\n'
+            f'• {E_REFERRAL} Her davette <b>+2 Puan</b>'
         ),
         'vip_already': (
-            '👑 <b>Zaten VIP üyesiniz!</b>\n\n'
-            '✅ VIP Mağazaya erişiminiz var\n'
-            '✅ Günde 2 kez günlük bonus hakkınız var\n'
-            '✅ Her davette +2 Puan kazanıyorsunuz'
+            f'{E_VIP} <b>Zaten VIP üyesiniz!</b>\n\n'
+            f'✅ VIP Mağazaya erişiminiz var\n'
+            f'✅ Günde 2 kez günlük bonus hakkınız var\n'
+            f'✅ Her davette +2 Puan kazanıyorsunuz'
         ),
         'vip_granted': (
-            '🎉 <b>Tebrikler! VIP üye oldunuz!</b>\n\n'
-            '👑 Artık VIP Mağazaya erişiminiz var\n'
-            '🎁 Günde 2 kez günlük bonus alabilirsiniz\n'
-            '🤝 Her davette +2 Puan kazanacaksınız'
+            f'🎉 <b>Tebrikler! VIP üye oldunuz!</b>\n\n'
+            f'{E_VIP} Artık VIP Mağazaya erişiminiz var\n'
+            f'{E_BONUS} Günde 2 kez günlük bonus alabilirsiniz\n'
+            f'{E_REFERRAL} Her davette +2 Puan kazanacaksınız'
         ),
 
-        'no_orders': '📦 <b>Sipariş Geçmişiniz</b>\n\nHenüz hiç siparişiniz bulunmuyor.',
+        'no_orders': f'{E_ORDERS} <b>Sipariş Geçmişiniz</b>\n\nHenüz hiç siparişiniz bulunmuyor.',
 
         'referral_link': (
-            '🤝 <b>Davet Et, Kazan!</b>\n\n'
-            '👇 Aşağıdaki kişisel linkinizle arkadaşlarınızı sisteme davet edin, her yeni katılımda anında <b>+1 Puan</b> kazanın.\n\n'
-            '📋 <b>Sizin Linkiniz:</b>\n'
-            'https://t.me/{bot_username}?start={user_id}'
+            f'{E_REFERRAL} <b>Davet Et, Kazan!</b>\n\n'
+            f'👇 Aşağıdaki kişisel linkinizle arkadaşlarınızı sisteme davet edin, her yeni katılımda anında <b>+1 Puan</b> kazanın.\n\n'
+            f'📋 <b>Sizin Linkiniz:</b>\n'
+            f'https://t.me/{{bot_username}}?start={{user_id}}'
         ),
 
         'support_text': (
-            '💬 <b>Destek Merkezi</b>\n\n'
-            '⚠️ <b>Lütfen admini boş yere rahatsız etmeyiniz.</b>\n'
-            'Mesajınız yalnızca gerçek bir sorun, hatalı sipariş veya acil durum söz konusuysa iletilmelidir.\n'
-            'Sık sorulan sorular için önce Yardım menüsünü inceleyin.\n\n'
-            '💎 <b>Bakiyeniz:</b> {balance} Puan\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            'Sorununuzu veya talebinizi aşağıya yazın.\n'
-            'İptal etmek için /iptal yazın.'
+            f'{E_SUPPORT} <b>Destek Merkezi</b>\n\n'
+            f'⚠️ <b>Lütfen admini boş yere rahatsız etmeyiniz.</b>\n'
+            f'Mesajınız yalnızca gerçek bir sorun, hatalı sipariş veya acil durum söz konusuysa iletilmelidir.\n'
+            f'Sık sorulan sorular için önce Yardım menüsünü inceleyin.\n\n'
+            f'{E_DIAMOND} <b>Bakiyeniz:</b> {{balance}} Puan\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'Sorununuzu veya talebinizi aşağıya yazın.\n'
+            f'İptal etmek için /iptal yazın.'
         ),
-        'support_cancelled': '❌ İptal edildi.',
+        'support_cancelled': f'{E_CROSS} İptal edildi.',
         'support_sent': '✅ Mesajınız iletildi. Yakında sizinle iletişime geçeceğiz.',
 
-        'no_active_raffle': '🎲 <b>Çekiliş</b>\n\n⚠️ Şu anda aktif bir çekiliş bulunmuyor.\n\n<i>Yeni çekilişler için takipte kalın!</i>',
+        'no_active_raffle': f'{E_RAFFLE} <b>Çekiliş</b>\n\n⚠️ Şu anda aktif bir çekiliş bulunmuyor.\n\n<i>Yeni çekilişler için takipte kalın!</i>',
 
         'donate_text': (
-            '⭐️ <b>Bağış Yap</b>\n\n'
-            'Eren SMM TR olarak sizlere her zaman daha iyi, daha hızlı, daha uzun süre ve daha uygun fiyata hizmet verebilmek için büyük emek harcıyoruz.\n\n'
-            'Eğer hizmetlerimizden memnun kaldıysanız, bize bir yıldız <b>bağışı</b> yaparak destek olabilirsiniz. Her katkı bizim için çok değerlidir. Sağ olun, var olun! 🙏\n\n'
-            'Kaç yıldız <b>bağış</b> yapmak istersiniz?'
+            f'{E_DONATE} <b>Bağış Yap</b>\n\n'
+            f'Eren SMM TR olarak sizlere her zaman daha iyi, daha hızlı, daha uzun süre ve daha uygun fiyata hizmet verebilmek için büyük emek harcıyoruz.\n\n'
+            f'Eğer hizmetlerimizden memnun kaldıysanız, bize bir yıldız <b>bağışı</b> yaparak destek olabilirsiniz. Her katkı bizim için çok değerlidir. Sağ olun, var olun! 🙏\n\n'
+            f'Kaç yıldız <b>bağış</b> yapmak istersiniz?'
         ),
-        'donate_invoice_sent': '⭐️ {stars} yıldızlık bağış faturası size özelden gönderildi. Lütfen ödemeyi tamamlayın.',
+        'donate_invoice_sent': f'{E_DONATE} {{stars}} yıldızlık bağış faturası size özelden gönderildi. Lütfen ödemeyi tamamlayın.',
 
         'help_text': (
-            '📖 <b>YARDIM MERKEZİ</b> 📖\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '🛍 Mağaza Nedir ⁉️\n'
-            'Botun ana satış alanıdır. Kategoriler halinde düzenlenmiş ürünleri buradan satın alabilirsiniz. Bir ürüne tıklayınca fiyat ve stok bilgisi çıkar, satın al butonuna basınca puan düşülür ve siparişiniz oluşur.\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '👑 VIP Mağaza ve Üyelik ⁉️\n'
-            'VIP mağaza yalnızca VIP üyelere özel ürünler içerir. 20 referans getirerek VIP olabilirsiniz.\n'
-            'VIP avantajları: 👑 VIP Mağaza erişimi • 🎁 Günde 2x bonus • 🤝 Davette +2 Puan\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '💎 Puan Nasıl Kazanılır ⁉️\n'
-            '• Davet linkinizle arkadaş getirince +1 Puan (VIP: +2 Puan)\n'
-            '• Her gün günlük bonus: +1 Puan (VIP: günde 2 kez)\n'
-            '• Admin tarafından manuel puan yüklenmesiyle\n'
-            '• Promosyon kodu kullanarak\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '📦 Sipariş Takibi Nasıl Çalışır ⁉️\n'
-            'Satın aldığınız her ürün için otomatik bir Sipariş ID oluşturulur.\n'
-            'Sipariş verdikten sonra bot sizden profil linkinizi isteyecektir.\n\n'
-            'Sipariş durumları:\n'
-            '🟡 Beklemede — Onay bekleniyor\n'
-            '🟢 Tamamlandı — Teslim edildi\n'
-            '🔴 Reddedildi — İptal edildi\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '🎫 Promosyon Kodu Nedir? ⁉️\n'
-            'Yönetici tarafından oluşturulan özel kodlardır.\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '🤝 Davet Et Kazan Nedir ⁉️\n'
-            'Size özel davet linkinizi paylaşın. Her katılan kişi için otomatik +1 Puan kazanırsınız.\n'
-            '20 kişiyi davet ederek VIP üye olabilirsiniz.\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '💰 Puan Transfer ⁉️\n'
-            'Günde 2 transfer hakkınız vardır. Her transferde 1 Puan komisyon kesilir.\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '⁉️ Destek İçin: <b>Destek</b> butonu üzerinden ulaşabilirsiniz ⁉️'
+            f'{E_HELP} <b>YARDIM MERKEZİ</b> {E_HELP}\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_SHOP} Mağaza Nedir ⁉️\n'
+            f'Botun ana satış alanıdır. Kategoriler halinde düzenlenmiş ürünleri buradan satın alabilirsiniz. Bir ürüne tıklayınca fiyat ve stok bilgisi çıkar, satın al butonuna basınca puan düşülür ve siparişiniz oluşur.\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_VIP} VIP Mağaza ve Üyelik ⁉️\n'
+            f'VIP mağaza yalnızca VIP üyelere özel ürünler içerir. 20 referans getirerek VIP olabilirsiniz.\n'
+            f'VIP avantajları: {E_VIP} VIP Mağaza erişimi • {E_BONUS} Günde 2x bonus • {E_REFERRAL} Davette +2 Puan\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_DIAMOND} Puan Nasıl Kazanılır ⁉️\n'
+            f'• Davet linkinizle arkadaş getirince +1 Puan (VIP: +2 Puan)\n'
+            f'• Her gün günlük bonus: +1 Puan (VIP: günde 2 kez)\n'
+            f'• Admin tarafından manuel puan yüklenmesiyle\n'
+            f'• Promosyon kodu kullanarak\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_ORDERS} Sipariş Takibi Nasıl Çalışır ⁉️\n'
+            f'Satın aldığınız her ürün için otomatik bir Sipariş ID oluşturulur.\n'
+            f'Sipariş verdikten sonra bot sizden profil linkinizi isteyecektir.\n\n'
+            f'Sipariş durumları:\n'
+            f'🟡 Beklemede — Onay bekleniyor\n'
+            f'🟢 Tamamlandı — Teslim edildi\n'
+            f'🔴 Reddedildi — İptal edildi\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'🎫 Promosyon Kodu Nedir? ⁉️\n'
+            f'Yönetici tarafından oluşturulan özel kodlardır.\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_REFERRAL} Davet Et Kazan Nedir ⁉️\n'
+            f'Size özel davet linkinizi paylaşın. Her katılan kişi için otomatik +1 Puan kazanırsınız.\n'
+            f'20 kişiyi davet ederek VIP üye olabilirsiniz.\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_TRANSFER} Puan Transfer ⁉️\n'
+            f'Günde 2 transfer hakkınız vardır. Her transferde 1 Puan komisyon kesilir.\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'⁉️ Destek İçin: <b>Destek</b> butonu üzerinden ulaşabilirsiniz ⁉️'
         ),
 
         'coupon_maintenance': '🔧 Kupon Sistemi Tamirde',
         'generic_error': '⚠️ Bir şeyler ters gitti, lütfen tekrar deneyin.',
-        'lang_select': 'Lütfen dil tercihinizi yapın / Please select your language:',
+        'lang_select': f'{E_LANG} Lütfen dil tercihinizi yapın / Please select your language:',
     },
     'EN': {
-        'welcome': '☀️ Hello\n\n👾 <b>Eren SMM TR</b>\nTurkey\'s trusted digital product marketplace.\n\nSelect an operation:',
-        'balance': '💎 Balance',
-        'profile': '👤 Profile',
-        'shop': '🛍️ Shop',
-        'vip_button': '👑 Get VIP • 20 Referrals',
-        'daily_bonus': '🎁 Daily Bonus',
-        'orders': '📦 My Orders',
-        'transfer': '💰 Points Transfer',
+        'welcome': f'{E_SUN} Hello\n\n{E_BOT} <b>Eren SMM TR</b>\nTurkey\'s trusted digital product marketplace.\n\nSelect an operation:',
+        'balance': f'{E_DIAMOND} Balance',
+        'profile': f'{E_USER} Profile',
+        'shop': f'{E_SHOP} Shop',
+        'vip_button': f'{E_VIP} Get VIP • 20 Referrals',
+        'daily_bonus': f'{E_BONUS} Daily Bonus',
+        'orders': f'{E_ORDERS} My Orders',
+        'transfer': f'{E_TRANSFER} Points Transfer',
         'coupon': '🎫 Coupon Code',
-        'referral': '🤝 Referral',
-        'support': '💬 Support',
-        'help': '❓ Help',
-        'language': '🌍 Language',
-        'raffle': '🎲 Raffle',
-        'donate': '⭐️ Donate',
+        'referral': f'{E_REFERRAL} Referral',
+        'support': f'{E_SUPPORT} Support',
+        'help': f'{E_HELP} Help',
+        'language': f'{E_LANG} Language',
+        'raffle': f'{E_RAFFLE} Raffle',
+        'donate': f'{E_DONATE} Donate',
         'back_to_menu': '← Back to Menu',
 
         'profile_text': (
-            '👤 <b>Profile Summary</b>\n\n'
-            '🆔 <b>User ID:</b> {user_id}\n'
-            '💎 <b>Wallet Balance:</b> {balance} Points\n'
-            '🤝 <b>Referred:</b> {referrals} People\n'
-            '💼 <b>Total Orders:</b> {orders}\n'
-            '📆 <b>Registration Date:</b> {reg_date}\n\n'
-            '💡 As VIP: 2x Daily Bonus, +2 Referral Points, access to VIP Shop!'
+            f'{E_USER} <b>Profile Summary</b>\n\n'
+            f'🆔 <b>User ID:</b> {{user_id}}\n'
+            f'{E_DIAMOND} <b>Wallet Balance:</b> {{balance}} Points\n'
+            f'{E_REFERRAL} <b>Referred:</b> {{referrals}} People\n'
+            f'💼 <b>Total Orders:</b> {{orders}}\n'
+            f'📆 <b>Registration Date:</b> {{reg_date}}\n\n'
+            f'💡 As VIP: 2x Daily Bonus, +2 Referral Points, access to VIP Shop!'
         ),
 
         'daily_bonus_success': (
-            '🎁 <b>Daily Bonus Claimed!</b>\n\n'
-            '➕ +1 Point added to your account!\n'
-            '💎 New Balance: {balance} Points\n\n'
-            '👍 You\'ve used all your bonus rights for today!'
+            f'{E_BONUS} <b>Daily Bonus Claimed!</b>\n\n'
+            f'➕ +1 Point added to your account!\n'
+            f'{E_DIAMOND} New Balance: {{balance}} Points\n\n'
+            f'👍 You\'ve used all your bonus rights for today!'
         ),
         'daily_bonus_success_vip': (
-            '🎁 <b>Daily Bonus Claimed!</b>\n\n'
-            '➕ +1 Point added to your account!\n'
-            '💎 New Balance: {balance} Points\n\n'
-            '👑 As VIP you\'ve used {used}/2 bonuses today!'
+            f'{E_BONUS} <b>Daily Bonus Claimed!</b>\n\n'
+            f'➕ +1 Point added to your account!\n'
+            f'{E_DIAMOND} New Balance: {{balance}} Points\n\n'
+            f'{E_VIP} As VIP you\'ve used {{used}}/2 bonuses today!'
         ),
         'daily_bonus_used': '⏳ You\'ve used today\'s bonus!\nCome back tomorrow!',
 
-        'insufficient_balance': '❌ Insufficient Balance!\nRequired: {needed} Points\nYour Balance: {balance} Points',
+        'insufficient_balance': f'{E_CROSS} Insufficient Balance!\nRequired: {{needed}} Points\nYour Balance: {{balance}} Points',
 
         'transfer_info': (
-            '💰 <b>Points Transfer System</b>\n\n'
-            '💎 <b>Your Balance:</b> {balance} Points\n'
-            '⏳ <b>Daily Limit:</b> {daily_left}/2 left\n\n'
-            '1️⃣ The bot deducts <b>1 Point</b> commission per transfer.\n'
-            '👤 Enter recipient ID and amount to transfer.\n\n'
-            'Format: RecipientID|Amount\n'
-            'E.g.: 1234567|10'
+            f'{E_TRANSFER} <b>Points Transfer System</b>\n\n'
+            f'{E_DIAMOND} <b>Your Balance:</b> {{balance}} Points\n'
+            f'⏳ <b>Daily Limit:</b> {{daily_left}}/2 left\n\n'
+            f'1️⃣ The bot deducts <b>1 Point</b> commission per transfer.\n'
+            f'{E_USER} Enter recipient ID and amount to transfer.\n\n'
+            f'Format: RecipientID|Amount\n'
+            f'E.g.: 1234567|10'
         ),
         'transfer_prompt': (
-            '💰 <b>Enter Transfer Info</b>\n\n'
-            'Format: RecipientID|Amount\n'
-            'E.g.: 1234567|10\n\n'
-            '⚠️ The bot deducts <b>1 Point</b> commission.\n'
-            '💎 <b>Your Balance:</b> {balance} Points\n\n'
-            'Cancel: /iptal'
+            f'{E_TRANSFER} <b>Enter Transfer Info</b>\n\n'
+            f'Format: RecipientID|Amount\n'
+            f'E.g.: 1234567|10\n\n'
+            f'⚠️ The bot deducts <b>1 Point</b> commission.\n'
+            f'{E_DIAMOND} <b>Your Balance:</b> {{balance}} Points\n\n'
+            f'Cancel: /iptal'
         ),
         'transfer_cancelled': '⚠️ Transfer cancelled.',
-        'transfer_format_error': '❌ Invalid format!\nCorrect format: RecipientID|Amount\nE.g.: 1234567|10',
-        'transfer_success': '✅ Transfer Successful!\n\n📤 You sent {amount} Points\n👤 Recipient: {receiver_id}\n💸 Commission: 1 Point\n💎 New Balance: {new_balance} Points',
+        'transfer_format_error': f'{E_CROSS} Invalid format!\nCorrect format: RecipientID|Amount\nE.g.: 1234567|10',
+        'transfer_success': f'✅ Transfer Successful!\n\n📤 You sent {{amount}} Points\n{E_USER} Recipient: {{receiver_id}}\n💸 Commission: 1 Point\n{E_DIAMOND} New Balance: {{new_balance}} Points',
         'transfer_limit_reached': '⏳ Your daily transfer limit is reached!\n\nYou can make at most 2 transfers per day. Try again tomorrow.',
 
-        'shop_welcome': '👋 <b>Welcome to the Shop!</b>\n\nSelect a category:',
+        'shop_welcome': f'{E_SHOP} <b>Welcome to the Shop!</b>\n\nSelect a category:',
         'tiktok_smm': '🎵 TikTok SMM',
         'telegram_smm': '📱 Telegram SMM',
-        'category_empty': '📦 {category}\n\nNo products in this category yet.\nComing soon!',
+        'category_empty': f'{E_ORDERS} {{category}}\n\nNo products in this category yet.\nComing soon!',
 
-        'vip_shop_welcome': '👑 <b>Welcome to the VIP Shop!</b>\n\nExclusive VIP products:',
-        'vip_required_alert': '👑 Please become VIP first!\nVIP membership is required to access the VIP shop.',
+        'vip_shop_welcome': f'{E_VIP} <b>Welcome to the VIP Shop!</b>\n\nExclusive VIP products:',
+        'vip_required_alert': f'{E_VIP} Please become VIP first!\nVIP membership is required to access the VIP shop.',
 
         'vip_purchase_text': (
-            '👍 <b>Get VIP</b>\n\n'
-            '{required} referrals are required for VIP!\n\n'
-            '👍 Your current referrals: <b>{current}/{required}</b>\n'
-            '👍 Missing: <b>{missing} more people</b> to invite!\n\n'
-            '• 👍 <b>VIP Benefits:</b>\n'
-            '• 👍 VIP Shop access\n'
-            '• 👍 Daily bonus twice a day\n'
-            '• 👍 <b>+2 Points</b> per referral'
+            f'👍 <b>Get VIP</b>\n\n'
+            f'{{required}} referrals are required for VIP!\n\n'
+            f'👍 Your current referrals: <b>{{current}}/{{required}}</b>\n'
+            f'👍 Missing: <b>{{missing}} more people</b> to invite!\n\n'
+            f'• 👍 <b>VIP Benefits:</b>\n'
+            f'• {E_VIP} VIP Shop access\n'
+            f'• {E_BONUS} Daily bonus twice a day\n'
+            f'• {E_REFERRAL} <b>+2 Points</b> per referral'
         ),
         'vip_already': (
-            '👑 <b>You are already a VIP member!</b>\n\n'
-            '✅ You have VIP Shop access\n'
-            '✅ You can claim the daily bonus twice a day\n'
-            '✅ You earn +2 Points per referral'
+            f'{E_VIP} <b>You are already a VIP member!</b>\n\n'
+            f'✅ You have VIP Shop access\n'
+            f'✅ You can claim the daily bonus twice a day\n'
+            f'✅ You earn +2 Points per referral'
         ),
         'vip_granted': (
-            '🎉 <b>Congrats! You are now VIP!</b>\n\n'
-            '👑 You now have VIP Shop access\n'
-            '🎁 You can claim the daily bonus twice a day\n'
-            '🤝 You\'ll earn +2 Points per referral'
+            f'🎉 <b>Congrats! You are now VIP!</b>\n\n'
+            f'{E_VIP} You now have VIP Shop access\n'
+            f'{E_BONUS} You can claim the daily bonus twice a day\n'
+            f'{E_REFERRAL} You\'ll earn +2 Points per referral'
         ),
 
-        'no_orders': '📦 <b>Your Order History</b>\n\nYou have no orders yet.',
+        'no_orders': f'{E_ORDERS} <b>Your Order History</b>\n\nYou have no orders yet.',
 
         'referral_link': (
-            '🤝 <b>Invite, Earn!</b>\n\n'
-            '👇 Invite your friends with your personal link below, earn <b>+1 Point</b> instantly for every new signup.\n\n'
-            '📋 <b>Your Link:</b>\n'
-            'https://t.me/{bot_username}?start={user_id}'
+            f'{E_REFERRAL} <b>Invite, Earn!</b>\n\n'
+            f'👇 Invite your friends with your personal link below, earn <b>+1 Point</b> instantly for every new signup.\n\n'
+            f'📋 <b>Your Link:</b>\n'
+            f'https://t.me/{{bot_username}}?start={{user_id}}'
         ),
 
         'support_text': (
-            '💬 <b>Support Center</b>\n\n'
-            '⚠️ <b>Please don\'t disturb the admin unnecessarily.</b>\n'
-            'Only send a message for a real issue, faulty order, or emergency.\n'
-            'Check the Help menu first for FAQs.\n\n'
-            '💎 <b>Your Balance:</b> {balance} Points\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            'Write your issue or request below.\n'
-            'Type /iptal to cancel.'
+            f'{E_SUPPORT} <b>Support Center</b>\n\n'
+            f'⚠️ <b>Please don\'t disturb the admin unnecessarily.</b>\n'
+            f'Only send a message for a real issue, faulty order, or emergency.\n'
+            f'Check the Help menu first for FAQs.\n\n'
+            f'{E_DIAMOND} <b>Your Balance:</b> {{balance}} Points\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'Write your issue or request below.\n'
+            f'Type /iptal to cancel.'
         ),
-        'support_cancelled': '❌ Cancelled.',
+        'support_cancelled': f'{E_CROSS} Cancelled.',
         'support_sent': '✅ Your message has been sent. We\'ll contact you soon.',
 
-        'no_active_raffle': '🎲 <b>Raffle</b>\n\n⚠️ There is no active raffle right now.\n\n<i>Stay tuned for new raffles!</i>',
+        'no_active_raffle': f'{E_RAFFLE} <b>Raffle</b>\n\n⚠️ There is no active raffle right now.\n\n<i>Stay tuned for new raffles!</i>',
 
         'donate_text': (
-            '⭐️ <b>Donate</b>\n\n'
-            'As Eren SMM TR, we work hard to always provide you better, faster, longer-lasting and more affordable service.\n\n'
-            'If you are happy with our services, you can support us with a star <b>donation</b>. Every contribution means a lot to us. Thank you! 🙏\n\n'
-            'How many stars would you like to <b>donate</b>?'
+            f'{E_DONATE} <b>Donate</b>\n\n'
+            f'As Eren SMM TR, we work hard to always provide you better, faster, longer-lasting and more affordable service.\n\n'
+            f'If you are happy with our services, you can support us with a star <b>donation</b>. Every contribution means a lot to us. Thank you! 🙏\n\n'
+            f'How many stars would you like to <b>donate</b>?'
         ),
-        'donate_invoice_sent': '⭐️ A {stars}-star donation invoice has been sent to you in private. Please complete the payment.',
+        'donate_invoice_sent': f'{E_DONATE} A {{stars}}-star donation invoice has been sent to you in private. Please complete the payment.',
 
         'help_text': (
-            '📖 <b>HELP CENTER</b> 📖\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '🛍 What is the Shop ⁉️\n'
-            'The bot\'s main sales area. You can buy products organized into categories here.\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '👑 VIP Shop & Membership ⁉️\n'
-            'VIP benefits: 👑 VIP Shop access • 🎁 2x daily bonus • 🤝 +2 Points per referral\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '⁉️ For Support: Use the <b>Support</b> button ⁉️'
+            f'{E_HELP} <b>HELP CENTER</b> {E_HELP}\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_SHOP} What is the Shop ⁉️\n'
+            f'The bot\'s main sales area. You can buy products organized into categories here.\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'{E_VIP} VIP Shop & Membership ⁉️\n'
+            f'VIP benefits: {E_VIP} VIP Shop access • {E_BONUS} 2x daily bonus • {E_REFERRAL} +2 Points per referral\n\n'
+            f'━━━━━━━━━━━━━━━━━\n'
+            f'⁉️ For Support: Use the <b>Support</b> button ⁉️'
         ),
 
         'coupon_maintenance': '🔧 Coupon System Under Maintenance',
         'generic_error': '⚠️ Something went wrong, please try again.',
-        'lang_select': 'Lütfen dil tercihinizi yapın / Please select your language:',
+        'lang_select': f'{E_LANG} Lütfen dil tercihinizi yapın / Please select your language:',
     }
 }
 
 # ===== HELPER FUNCTIONS =====
 def is_admin(user_id):
-    """Həm əsas admin həm də əlavə edilmiş adminlər"""
     if user_id == ADMIN_ID:
         return True
     conn = get_conn()
@@ -570,9 +585,6 @@ def clear_pending_referrer(user_id):
         put_conn(conn)
 
 async def credit_referral(context, referrer_id, referred_user_id, referred_name):
-    """Doğrulamadan keçən yeni istifadəçi üçün referans bonusunu hesablayır
-    (saxta /start botlarının referansı boş yerə artırmasının qarşısını almaq üçün
-    bu, yalnız təhlükəsizlik sualı düzgün cavablandıqdan sonra çağırılır)."""
     conn = get_conn()
     referrer = None
     try:
@@ -601,17 +613,17 @@ async def credit_referral(context, referrer_id, referred_user_id, referred_name)
 
     try:
         ref_lang = get_user_language(referrer)
-        notify = ('🤝 Yeni bir kişi linkinizle katıldı!\n➕ +{} Puan kazandınız!' if ref_lang == 'TR'
-                  else '🤝 Someone joined using your link!\n➕ You earned +{} Points!').format(bonus)
-        await context.bot.send_message(referrer_id, notify)
+        notify = (f'{E_REFERRAL} Yeni bir kişi linkinizle katıldı!\n➕ +{bonus} Puan kazandınız!' if ref_lang == 'TR'
+                  else f'{E_REFERRAL} Someone joined using your link!\n➕ You earned +{bonus} Points!')
+        await context.bot.send_message(referrer_id, notify, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error(f"referrer notify error: {e}")
 
     referrer_name = referrer.get('username') or str(referrer_id)
     log_text = (
-        f"🤝 <b>Yeni Referans</b>\n\n"
-        f"👤 <b>Referans Veren:</b> {referrer_name} (<code>{referrer_id}</code>)\n"
-        f"👤 <b>Yeni Üye:</b> {referred_name} (<code>{referred_user_id}</code>)\n"
+        f"{E_REFERRAL} <b>Yeni Referans</b>\n\n"
+        f"{E_USER} <b>Referans Veren:</b> {referrer_name} (<code>{referrer_id}</code>)\n"
+        f"{E_USER} <b>Yeni Üye:</b> {referred_name} (<code>{referred_user_id}</code>)\n"
         f"📅 <b>Tarih:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
     try:
@@ -693,7 +705,7 @@ def main_menu_keyboard(user):
 
     if is_vip:
         vip_row = [InlineKeyboardButton(
-            '👑 VIP Üye' if lang == 'TR' else '👑 VIP Member',
+            f'{E_VIP} VIP Üye' if lang == 'TR' else f'{E_VIP} VIP Member',
             callback_data='vip_already_info'
         )]
     else:
@@ -703,7 +715,7 @@ def main_menu_keyboard(user):
         [InlineKeyboardButton(get_text('balance', lang), callback_data='balance'),
          InlineKeyboardButton(get_text('profile', lang), callback_data='profile')],
         [InlineKeyboardButton(get_text('shop', lang), callback_data='shop'),
-         InlineKeyboardButton('👑 VIP Mağaza' if lang == 'TR' else '👑 VIP Shop', callback_data='vip_shop')],
+         InlineKeyboardButton(f'{E_VIP} VIP Mağaza' if lang == 'TR' else f'{E_VIP} VIP Shop', callback_data='vip_shop')],
         vip_row,
         [InlineKeyboardButton(get_text('daily_bonus', lang), callback_data='daily_bonus'),
          InlineKeyboardButton(get_text('orders', lang), callback_data='orders')],
@@ -722,7 +734,6 @@ def back_to_menu_markup(lang):
     return InlineKeyboardMarkup([[InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]])
 
 def is_valid_url(url):
-    """Sadə URL yoxlama"""
     pattern = re.compile(
         r'^https?://'
         r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
@@ -781,7 +792,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         create_user(user_id, tg_user.username or f"User{user_id}")
         existing_user = get_user(user_id)
 
-        # Referans linki varsa saxla — bonus yalnız təhlükəsizlik sualı keçildikdən sonra veriləcək
         if update.message and context.args:
             try:
                 referrer_id = int(context.args[0])
@@ -790,7 +800,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (ValueError, IndexError):
                 pass
 
-    # Doğrulamadan keçməyibsə menyu əvəzinə təhlükəsizlik sualı göstər
     if not existing_user.get('is_verified', True):
         await send_captcha(update, context, user_id)
         return
@@ -872,7 +881,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await answer_once('❌ Yanlış cevap! Tekrar deneyin.', show_alert=True)
             return
 
-        # ===== BALANCE / PROFILE =====
         elif data in ('balance', 'profile'):
             conn = get_conn()
             try:
@@ -897,7 +905,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await safe_edit(query, text, keyboard)
 
-        # ===== DAILY BONUS =====
         elif data == 'daily_bonus':
             is_vip = bool(user['vip_status'])
             today = datetime.now().strftime('%Y-%m-%d')
@@ -940,12 +947,10 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = get_text('daily_bonus_success', lang, balance=new_balance)
             await safe_edit(query, text, back_markup)
 
-        # ===== REFERRAL =====
         elif data == 'referral':
             text = get_text('referral_link', lang, user_id=user_id, bot_username=BOT_USERNAME)
             await safe_edit(query, text, back_markup)
 
-        # ===== LANGUAGE =====
         elif data == 'language':
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton('🇹🇷 Türkçe', callback_data='lang_tr'),
@@ -967,7 +972,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 put_conn(conn)
             await start(update, context)
 
-        # ===== SHOP =====
         elif data == 'shop':
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton(get_text('tiktok_smm', lang), callback_data='shop_tiktok'),
@@ -987,16 +991,15 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit(query, text, keyboard)
             else:
                 cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
-                text = f"🛍️ <b>{cat_label}</b>\n\nBir ürün seçin:\n"
+                text = f"{E_SHOP} <b>{cat_label}</b>\n\nBir ürün seçin:\n"
                 rows = []
                 for p in products:
                     stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
-                    text += f"\n<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n"
+                    text += f"\n<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | {E_ORDERS} Stok: {stock_text}\n"
                     rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
                 rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
-        # ===== VIP SHOP =====
         elif data == 'vip_shop':
             if not user['vip_status']:
                 await answer_once(get_text('vip_required_alert', lang), show_alert=True)
@@ -1012,12 +1015,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows = []
                 for p in products:
                     stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
-                    text += f"<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n\n"
+                    text += f"<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | {E_ORDERS} Stok: {stock_text}\n\n"
                     rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
                 rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
-        # ===== VIP PURCHASE =====
         elif data == 'vip_purchase':
             if user['vip_status']:
                 await safe_edit(query, get_text('vip_already', lang), back_markup)
@@ -1045,7 +1047,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'vip_already_info':
             await safe_edit(query, get_text('vip_already', lang), back_markup)
 
-        # ===== ORDERS =====
         elif data == 'orders':
             conn = get_conn()
             try:
@@ -1067,20 +1068,19 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not orders:
                 await safe_edit(query, get_text('no_orders', lang), back_markup)
             else:
-                title = '📦 <b>Siparişleriniz</b>' if lang == 'TR' else '📦 <b>Your Orders</b>'
+                title = f'{E_ORDERS} <b>Siparişleriniz</b>' if lang == 'TR' else f'{E_ORDERS} <b>Your Orders</b>'
                 text = f"{title} ({len(orders)}):\n\n"
                 for order in orders:
                     emoji = order_status_emoji(order['status'])
                     text += (
                         f"{emoji} <b>#{order['order_id']}</b> — {order['status']}\n"
-                        f"🛍️ <b>{order['product_name']}</b>\n"
+                        f"{E_SHOP} <b>{order['product_name']}</b>\n"
                         f"💵 {order['product_price']} Puan\n"
                         f"🔗 {order.get('profile_link', '-')}\n"
                         f"📅 {order.get('order_date', '-')}\n\n"
                     )
                 await safe_edit(query, text, back_markup)
 
-        # ===== TRANSFER =====
         elif data == 'transfer':
             daily_left = 2
             today = datetime.now().strftime('%Y-%m-%d')
@@ -1095,25 +1095,23 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(query, text, back_markup)
             context.user_data['awaiting_transfer'] = True
 
-        # ===== RAFFLE =====
         elif data == 'raffle':
             await safe_edit(query, get_text('no_active_raffle', lang), back_markup)
 
-        # ===== DONATE =====
         elif data == 'donate':
             buttons = [
-                [InlineKeyboardButton('⭐️ 5', callback_data='donate_5'),
-                 InlineKeyboardButton('⭐️ 10', callback_data='donate_10')],
-                [InlineKeyboardButton('⭐️ 15', callback_data='donate_15'),
-                 InlineKeyboardButton('⭐️ 20', callback_data='donate_20')],
-                [InlineKeyboardButton('⭐️ 25', callback_data='donate_25'),
-                 InlineKeyboardButton('⭐️ 30', callback_data='donate_30')],
-                [InlineKeyboardButton('⭐️ 35', callback_data='donate_35'),
-                 InlineKeyboardButton('⭐️ 40', callback_data='donate_40')],
-                [InlineKeyboardButton('⭐️ 45', callback_data='donate_45'),
-                 InlineKeyboardButton('⭐️ 50', callback_data='donate_50')],
-                [InlineKeyboardButton('⭐️ 75', callback_data='donate_75'),
-                 InlineKeyboardButton('⭐️ 100', callback_data='donate_100')],
+                [InlineKeyboardButton(f'{E_DONATE} 5', callback_data='donate_5'),
+                 InlineKeyboardButton(f'{E_DONATE} 10', callback_data='donate_10')],
+                [InlineKeyboardButton(f'{E_DONATE} 15', callback_data='donate_15'),
+                 InlineKeyboardButton(f'{E_DONATE} 20', callback_data='donate_20')],
+                [InlineKeyboardButton(f'{E_DONATE} 25', callback_data='donate_25'),
+                 InlineKeyboardButton(f'{E_DONATE} 30', callback_data='donate_30')],
+                [InlineKeyboardButton(f'{E_DONATE} 35', callback_data='donate_35'),
+                 InlineKeyboardButton(f'{E_DONATE} 40', callback_data='donate_40')],
+                [InlineKeyboardButton(f'{E_DONATE} 45', callback_data='donate_45'),
+                 InlineKeyboardButton(f'{E_DONATE} 50', callback_data='donate_50')],
+                [InlineKeyboardButton(f'{E_DONATE} 75', callback_data='donate_75'),
+                 InlineKeyboardButton(f'{E_DONATE} 100', callback_data='donate_100')],
                 [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
             ]
             await safe_edit(query, get_text('donate_text', lang), InlineKeyboardMarkup(buttons))
@@ -1136,21 +1134,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"send_invoice error: {e}")
                 await safe_edit(query, get_text('generic_error', lang), back_markup)
 
-        # ===== COUPON =====
         elif data == 'coupon':
             await safe_edit(query, get_text('coupon_maintenance', lang), back_markup)
 
-        # ===== SUPPORT =====
         elif data == 'support':
             text = get_text('support_text', lang, balance=user['balance'])
             await safe_edit(query, text, back_markup)
             context.user_data['awaiting_support'] = True
 
-        # ===== HELP =====
         elif data == 'help':
             await safe_edit(query, get_text('help_text', lang), back_markup)
 
-        # ===== MAIN MENU =====
         elif data == 'main_menu':
             context.user_data['awaiting_transfer'] = False
             context.user_data['awaiting_support'] = False
@@ -1158,7 +1152,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['pending_product_id'] = None
             await start(update, context)
 
-        # ===== BUY — Məhsul Detay Səhifəsi =====
         elif data.startswith('buy_') and not data.startswith('buy_confirm_') and not data.startswith('buy_cancel_'):
             product_id = int(data.split('_')[1])
             conn = get_conn()
@@ -1178,7 +1171,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             stock_text = 'Sınırsız' if product['stock'] >= 999999 else str(product['stock'])
 
-            # Kategori bazlı geri dönüş butonu
             if product['category'] == 'TikTok':
                 back_cb = 'shop_tiktok'
             elif product['category'] == 'Telegram':
@@ -1189,7 +1181,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 f"<b>{product['name']}</b>\n\n"
                 f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
-                f"📦 <b>Stok:</b> {stock_text}\n\n"
+                f"{E_ORDERS} <b>Stok:</b> {stock_text}\n\n"
                 f"⁉️ Satın almak istiyorsunuz ⁉️"
             )
             keyboard = InlineKeyboardMarkup([
@@ -1200,7 +1192,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await safe_edit(query, text, keyboard)
 
-        # ===== BUY CONFIRM — Bakiye Yoxla, Link İstə =====
         elif data.startswith('buy_confirm_'):
             product_id = int(data.split('_')[2])
             conn = get_conn()
@@ -1218,25 +1209,23 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await answer_once('❌ Ürün bulunamadı!', show_alert=True)
                 return
 
-            # Bakiye kontrolü
             if user['balance'] < product['price']:
                 needed = product['price']
                 text = (
                     f"👎 <b>Yetersiz Bakiye!</b>\n\n"
                     f"💵 <b>{needed} Puana</b> ihtiyacınız var.\n"
-                    f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>"
+                    f"{E_DIAMOND} Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>"
                 )
                 await safe_edit(query, text, back_markup)
                 return
 
-            # Bakiye yeterliyse link iste
             await answer_once()
             context.user_data['awaiting_profile_link'] = True
             context.user_data['pending_product_id'] = product_id
 
             text = (
                 f"🔗 <b>Sipariş Etmek İstediğiniz Bağlantıyı Girin</b>\n\n"
-                f"🛍️ Ürün: <b>{product['name']}</b>\n"
+                f"{E_SHOP} Ürün: <b>{product['name']}</b>\n"
                 f"💵 Fiyat: <b>{product['price']} Puan</b>\n\n"
                 f"Lütfen geçerli bir URL girin (https:// ile başlamalı).\n"
                 f"İptal için /iptal yazın."
@@ -1245,7 +1234,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton('❌ İptal', callback_data='main_menu')]
             ]))
 
-        # ===== ADMIN: Siparişi Onayla =====
         elif data.startswith('admin_approve_'):
             if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
@@ -1253,7 +1241,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order_id = int(data.split('_')[2])
             await _admin_approve_order(query, context, order_id, lang)
 
-        # ===== ADMIN: Siparişi Reddet =====
         elif data.startswith('admin_reject_'):
             if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
@@ -1261,7 +1248,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order_id = int(data.split('_')[2])
             await _admin_reject_order(query, context, order_id, lang)
 
-        # ===== ADMIN: Siparişi Tamamla =====
         elif data.startswith('admin_complete_'):
             if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
@@ -1282,7 +1268,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ADMIN ORDER ACTIONS =====
 async def _admin_approve_order(query, context, order_id, lang):
-    """Admin siparişi onaylar → log kanalında günceller, kullanıcıya bildirim + Tamamla butonu"""
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1295,11 +1280,9 @@ async def _admin_approve_order(query, context, order_id, lang):
         if not order:
             await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
             return
-
         if order['status'] != 'Beklemede':
             await query.answer(f'⚠️ Sipariş zaten {order["status"]}!', show_alert=True)
             return
-
         c.execute("UPDATE orders SET status = 'Onaylandı' WHERE order_id = %s", (order_id,))
         conn.commit()
     except Exception as e:
@@ -1311,13 +1294,11 @@ async def _admin_approve_order(query, context, order_id, lang):
         put_conn(conn)
 
     await query.answer('✅ Sipariş onaylandı!', show_alert=True)
-
-    # Log kanalını güncelle
     log_text = (
         f"✅ <b>Sipariş Onaylandı</b>\n\n"
         f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-        f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
-        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+        f"{E_USER} <b>Kullanıcı ID:</b> {order['user_id']}\n"
+        f"{E_SHOP} <b>Ürün:</b> {order['product_name']}\n"
         f"💵 <b>Fiyat:</b> {order['product_price']} Puan\n"
         f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
         f"📅 <b>Tarih:</b> {order['order_date']}"
@@ -1328,24 +1309,20 @@ async def _admin_approve_order(query, context, order_id, lang):
     try:
         if order.get('log_message_id'):
             await context.bot.edit_message_text(
-                chat_id=LOG_CHANNEL,
-                message_id=order['log_message_id'],
-                text=log_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=complete_markup
+                chat_id=LOG_CHANNEL, message_id=order['log_message_id'],
+                text=log_text, parse_mode=ParseMode.HTML, reply_markup=complete_markup
             )
         else:
             await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML, reply_markup=complete_markup)
     except Exception as e:
         logger.error(f"log channel update error: {e}")
 
-    # Kullanıcıya bildir
     try:
         await context.bot.send_message(
             order['user_id'],
             f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+            f"{E_SHOP} <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
             f"⏳ Siparişiniz işleme alındı, yakında tamamlanacak.",
             parse_mode=ParseMode.HTML
@@ -1354,7 +1331,6 @@ async def _admin_approve_order(query, context, order_id, lang):
         logger.error(f"user notify error: {e}")
 
 async def _admin_reject_order(query, context, order_id, lang):
-    """Admin siparişi reddeder → puanı iade eder"""
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1367,11 +1343,9 @@ async def _admin_reject_order(query, context, order_id, lang):
         if not order:
             await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
             return
-
         if order['status'] not in ('Beklemede', 'Onaylandı'):
             await query.answer(f'⚠️ Sipariş zaten {order["status"]}!', show_alert=True)
             return
-
         c.execute("UPDATE orders SET status = 'Reddedildi' WHERE order_id = %s", (order_id,))
         c.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s",
                   (order['product_price'], order['user_id']))
@@ -1385,12 +1359,11 @@ async def _admin_reject_order(query, context, order_id, lang):
         put_conn(conn)
 
     await query.answer('🔴 Sipariş reddedildi, puan iade edildi.', show_alert=True)
-
     log_text = (
         f"🔴 <b>Sipariş Reddedildi</b>\n\n"
         f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-        f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
-        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+        f"{E_USER} <b>Kullanıcı ID:</b> {order['user_id']}\n"
+        f"{E_SHOP} <b>Ürün:</b> {order['product_name']}\n"
         f"💵 <b>Fiyat:</b> {order['product_price']} Puan (iade edildi)\n"
         f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
         f"📅 <b>Tarih:</b> {order['order_date']}"
@@ -1398,10 +1371,8 @@ async def _admin_reject_order(query, context, order_id, lang):
     try:
         if order.get('log_message_id'):
             await context.bot.edit_message_text(
-                chat_id=LOG_CHANNEL,
-                message_id=order['log_message_id'],
-                text=log_text,
-                parse_mode=ParseMode.HTML
+                chat_id=LOG_CHANNEL, message_id=order['log_message_id'],
+                text=log_text, parse_mode=ParseMode.HTML
             )
         else:
             await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
@@ -1413,15 +1384,14 @@ async def _admin_reject_order(query, context, order_id, lang):
             order['user_id'],
             f"🔴 <b>Siparişiniz Reddedildi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
-            f"💵 <b>{order['product_price']} Puan</b> hesabınıza iade edildi.",
+            f"{E_SHOP} <b>Ürün:</b> {order['product_name']}\n"
+            f"{E_DIAMOND} <b>{order['product_price']} Puan</b> hesabınıza iade edildi.",
             parse_mode=ParseMode.HTML
         )
     except Exception as e:
         logger.error(f"user notify error: {e}")
 
 async def _admin_complete_order(query, context, order_id, lang):
-    """Admin siparişi tamamlar"""
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1434,11 +1404,9 @@ async def _admin_complete_order(query, context, order_id, lang):
         if not order:
             await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
             return
-
         if order['status'] == 'Tamamlandı':
             await query.answer('✅ Sipariş zaten tamamlandı!', show_alert=True)
             return
-
         c.execute("UPDATE orders SET status = 'Tamamlandı' WHERE order_id = %s", (order_id,))
         conn.commit()
     except Exception as e:
@@ -1450,12 +1418,11 @@ async def _admin_complete_order(query, context, order_id, lang):
         put_conn(conn)
 
     await query.answer('🟢 Sipariş tamamlandı!', show_alert=True)
-
     log_text = (
         f"🟢 <b>Sipariş Tamamlandı</b>\n\n"
         f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-        f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
-        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+        f"{E_USER} <b>Kullanıcı ID:</b> {order['user_id']}\n"
+        f"{E_SHOP} <b>Ürün:</b> {order['product_name']}\n"
         f"💵 <b>Fiyat:</b> {order['product_price']} Puan\n"
         f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
         f"📅 <b>Tarih:</b> {order['order_date']}"
@@ -1463,10 +1430,8 @@ async def _admin_complete_order(query, context, order_id, lang):
     try:
         if order.get('log_message_id'):
             await context.bot.edit_message_text(
-                chat_id=LOG_CHANNEL,
-                message_id=order['log_message_id'],
-                text=log_text,
-                parse_mode=ParseMode.HTML
+                chat_id=LOG_CHANNEL, message_id=order['log_message_id'],
+                text=log_text, parse_mode=ParseMode.HTML
             )
         else:
             await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
@@ -1478,7 +1443,7 @@ async def _admin_complete_order(query, context, order_id, lang):
             order['user_id'],
             f"🟢 <b>Siparişiniz Tamamlandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+            f"{E_SHOP} <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
             f"✅ Siparişiniz başarıyla teslim edilmiştir. İyi kullanımlar!",
             parse_mode=ParseMode.HTML
@@ -1493,15 +1458,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     lang = get_user_language(user)
 
-    # ===== PROFİL LİNK BEKLEME (Sipariş akışı) =====
     if context.user_data.get('awaiting_profile_link'):
         if text == '/iptal':
             context.user_data['awaiting_profile_link'] = False
             context.user_data['pending_product_id'] = None
-            await update.message.reply_text(
-                '❌ Sipariş iptal edildi.',
-                parse_mode=ParseMode.HTML
-            )
+            await update.message.reply_text('❌ Sipariş iptal edildi.', parse_mode=ParseMode.HTML)
             return
 
         product_id = context.user_data.get('pending_product_id')
@@ -1509,15 +1470,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['awaiting_profile_link'] = False
             return
 
-        # URL yoxlama
         if not is_valid_url(text.strip()):
             await update.message.reply_text(
-                '❌ <b>Yanlış Bağlantı!</b>\n\nGeçerli bir URL girin (https:// ile başlamalı).\nTekrar deneyin veya /iptal yazın.',
+                f'{E_CROSS} <b>Yanlış Bağlantı!</b>\n\nGeçerli bir URL girin (https:// ile başlamalı).\nTekrar deneyin veya /iptal yazın.',
                 parse_mode=ParseMode.HTML
             )
             return
 
-        # Məhsulu yenidən al
         conn = get_conn()
         try:
             c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1535,7 +1494,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text('❌ Ürün bulunamadı!', parse_mode=ParseMode.HTML)
             return
 
-        # Bakiye yenidən yoxla
         user = get_user(user_id)
         if user['balance'] < product['price']:
             context.user_data['awaiting_profile_link'] = False
@@ -1543,7 +1501,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"👎 <b>Yetersiz Bakiye!</b>\n\n"
                 f"💵 <b>{product['price']} Puana</b> ihtiyacınız var.\n"
-                f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>",
+                f"{E_DIAMOND} Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>",
                 parse_mode=ParseMode.HTML
             )
             return
@@ -1551,7 +1509,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile_link = text.strip()
         order_date = datetime.now().strftime('%Y-%m-%d %H:%M')
 
-        # Sipariş yarat, balansı düş
         conn = get_conn()
         try:
             c = conn.cursor()
@@ -1575,27 +1532,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data['awaiting_profile_link'] = False
         context.user_data['pending_product_id'] = None
-
         new_balance = user['balance'] - product['price']
 
-        # Kullanıcıya onay mesajı
         await update.message.reply_text(
             f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍️ <b>Ürün:</b> {product['name']}\n"
+            f"{E_SHOP} <b>Ürün:</b> {product['name']}\n"
             f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
             f"🔗 <b>Bağlantı:</b> {profile_link}\n"
-            f"💎 <b>Yeni Bakiye:</b> {new_balance} Puan\n\n"
+            f"{E_DIAMOND} <b>Yeni Bakiye:</b> {new_balance} Puan\n\n"
             f"⏳ <b>Siparişiniz Beklemede</b>",
             parse_mode=ParseMode.HTML
         )
 
-        # Log kanalına gönder
         log_text = (
             f"🛒 <b>Sipariş Geldi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"👤 <b>Kullanıcı ID:</b> {user_id}\n"
-            f"🛍️ <b>Ürün:</b> {product['name']}\n"
+            f"{E_USER} <b>Kullanıcı ID:</b> {user_id}\n"
+            f"{E_SHOP} <b>Ürün:</b> {product['name']}\n"
             f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
             f"🔗 <b>Bağlantı:</b> {profile_link}\n"
             f"📅 <b>Tarih:</b> {order_date}"
@@ -1608,12 +1562,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         try:
             log_msg = await context.bot.send_message(
-                LOG_CHANNEL,
-                log_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=log_markup
+                LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML, reply_markup=log_markup
             )
-            # log_message_id-ni saxla
             conn2 = get_conn()
             try:
                 c2 = conn2.cursor()
@@ -1626,10 +1576,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 put_conn(conn2)
         except Exception as e:
             logger.error(f"log channel send error: {e}")
-
         return
 
-    # ===== TRANSFER BEKLEME =====
     elif context.user_data.get('awaiting_transfer'):
         if text == '/iptal':
             context.user_data['awaiting_transfer'] = False
@@ -1639,24 +1587,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             parts = text.split('|')
             if len(parts) != 2:
-                await update.message.reply_text(get_text('transfer_format_error', lang))
+                await update.message.reply_text(get_text('transfer_format_error', lang), parse_mode=ParseMode.HTML)
                 return
 
             receiver_id = int(parts[0].strip())
             amount = int(parts[1].strip())
 
             if amount <= 0:
-                await update.message.reply_text(get_text('transfer_format_error', lang))
+                await update.message.reply_text(get_text('transfer_format_error', lang), parse_mode=ParseMode.HTML)
                 return
-
             if receiver_id == user_id:
                 await update.message.reply_text('❌ Kendinize transfer yapamazsınız!' if lang == 'TR' else "❌ You can't transfer to yourself!")
                 return
-
             if not user or user['balance'] < amount + 1:
                 needed = amount + 1
                 balance = user['balance'] if user else 0
-                await update.message.reply_text(get_text('insufficient_balance', lang, needed=needed, balance=balance))
+                await update.message.reply_text(get_text('insufficient_balance', lang, needed=needed, balance=balance), parse_mode=ParseMode.HTML)
                 return
 
             today = datetime.now().strftime('%Y-%m-%d')
@@ -1696,31 +1642,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data['awaiting_transfer'] = False
             new_balance = user['balance'] - (amount + 1)
-            success_msg = get_text('transfer_success', lang, amount=amount, receiver_id=receiver_id, new_balance=new_balance)
-            await update.message.reply_text(success_msg)
+            await update.message.reply_text(
+                get_text('transfer_success', lang, amount=amount, receiver_id=receiver_id, new_balance=new_balance),
+                parse_mode=ParseMode.HTML
+            )
 
-            log_msg = f"💸 YENİ TRANSFER\n\n👤 Gönderen: {user_id}\n👤 Alan: {receiver_id}\n💎 Miktar: {amount}\n💰 Komisyon: 1\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            log_msg = (
+                f"💸 <b>Yeni Transfer</b>\n\n"
+                f"{E_USER} <b>Gönderen:</b> <code>{user_id}</code>\n"
+                f"{E_USER} <b>Alan:</b> <code>{receiver_id}</code>\n"
+                f"{E_DIAMOND} <b>Miktar:</b> {amount} Puan\n"
+                f"💰 <b>Komisyon:</b> 1 Puan\n"
+                f"📅 <b>Zaman:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
             try:
-                await context.bot.send_message(LOG_CHANNEL, log_msg)
+                await context.bot.send_message(LOG_CHANNEL, log_msg, parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"log channel error: {e}")
 
             receiver_lang = get_user_language(receiver)
-            receiver_msg = (f"✅ {user_id} sizə {amount} Puan gönderdi!\n💎 Yeni Bakiye: {receiver['balance'] + amount}" if receiver_lang == 'TR'
-                             else f"✅ {user_id} sent you {amount} Points!\n💎 New Balance: {receiver['balance'] + amount}")
+            receiver_msg = (
+                f"✅ <code>{user_id}</code> sizə {amount} Puan gönderdi!\n{E_DIAMOND} Yeni Bakiye: {receiver['balance'] + amount}"
+                if receiver_lang == 'TR' else
+                f"✅ <code>{user_id}</code> sent you {amount} Points!\n{E_DIAMOND} New Balance: {receiver['balance'] + amount}"
+            )
             try:
-                await context.bot.send_message(receiver_id, receiver_msg)
+                await context.bot.send_message(receiver_id, receiver_msg, parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"receiver notify error: {e}")
 
         except ValueError:
-            await update.message.reply_text(get_text('transfer_format_error', lang))
+            await update.message.reply_text(get_text('transfer_format_error', lang), parse_mode=ParseMode.HTML)
 
-    # ===== SUPPORT BEKLEME =====
     elif context.user_data.get('awaiting_support'):
         if text == '/iptal':
             context.user_data['awaiting_support'] = False
-            await update.message.reply_text(get_text('support_cancelled', lang))
+            await update.message.reply_text(get_text('support_cancelled', lang), parse_mode=ParseMode.HTML)
             return
 
         context.user_data['awaiting_support'] = False
@@ -1745,7 +1702,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         vip_only = False
-        args = context.args
+        args = list(context.args)
         if args[-1].lower() in ('vip', 'true', '1'):
             vip_only = True
             args = args[:-1]
@@ -1855,13 +1812,13 @@ async def admin_set_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         target_user_id = int(context.args[0])
-        status = context.args[1].lower() in ('on', 'true', '1', 'evet')
+        status = context.args[1].lower() in ('on', 'true', '1', 'evet', 'ac')
         conn = get_conn()
         try:
             c = conn.cursor()
             c.execute('UPDATE users SET vip_status = %s WHERE user_id = %s', (status, target_user_id))
             conn.commit()
-            await update.message.reply_text(f'✅ Kullanıcı {target_user_id} VIP durumu: {"AÇIK" if status else "KAPALI"}')
+            await update.message.reply_text(f'✅ Kullanıcı {target_user_id} VIP durumu: {"AÇIK 👑" if status else "KAPALI"}')
         except Exception as e:
             logger.error(f"admin_set_vip error: {e}")
             conn.rollback()
@@ -1908,7 +1865,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         put_conn(conn)
 
 async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bekleyen siparişleri listele"""
     if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
@@ -1941,9 +1897,7 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-
 async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yalnız əsas admin istifadə edə bilər: /yetki <user_id>"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
         return
@@ -1981,7 +1935,6 @@ async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
 
 async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yetkini geri al: /yetkikal <user_id>"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
         return
@@ -2010,7 +1963,6 @@ async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
 
 async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yetkili adminləri göstər"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
@@ -2028,13 +1980,11 @@ async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admins:
         await update.message.reply_text('📋 Henüz yetkili admin eklenmemiş.\n\nEklemek için: /yetki <user_id>')
         return
-
     text = '👥 <b>Yetkili Adminler</b>\n\n'
     for a in admins:
         text += f"🔹 <b>{a['admin_id']}</b> — {a['added_date']}\n"
     text += f'\n🔸 <b>Ana Admin:</b> {ADMIN_ID}'
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
 
 # ===== MAIN =====
 def main():
