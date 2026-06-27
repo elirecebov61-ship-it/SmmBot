@@ -5,7 +5,7 @@ import random
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.error import BadRequest
 from telegram.constants import ParseMode
@@ -26,6 +26,35 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ===== PREMIUM EMOJI MAP =====
+# Hər unicode emoji -> sənin premium custom emoji ID-n.
+# Mesaj göndərilərkən mətndəki bu emoji-lər avtomatik custom_emoji entity-yə çevrilir.
+# (Bu yalnız botun bağlı olduğu hesabda Telegram Premium varsa düzgün animasiyalı görünür;
+#  premium olmayan istifadəçilər bunları normal placeholder emoji kimi görür, bu normaldır.)
+PREMIUM_EMOJI_MAP = {
+    '❌': '6224185666704511761',
+    '💎': '5251562950698759162',
+    '👤': '4967667085606912536',
+    '🛍': '4970023558068568720',
+    '👑': '6266995104687330978',
+    '👍': '6224185666704511761',  # Günlük bonusdaki "alınmaz" emoji - ❌ ilə eyni custom emoji
+    '📦': '5449683594425410231',
+    '💰': '5375338737028841420',
+    '🤝': '6071278787947925866',
+    '💬': '5352759161945867747',
+    '❓': '5197269100878907942',
+    '🌍': '5397575638146110953',
+    '🌎': '5397575638146110953',
+    '🌏': '5397575638146110953',
+    '🎲': '6071123877067494706',
+    '⭐': '5267102644886853973',
+    '🌞': '5402477260982731644',
+    '👾': '5305444432118589379',
+}
+# Tək kod nöqtəli emoji-ləri uzunluğa görə sıralayırıq (uzun olanlar əvvəl yoxlanmalı,
+# məsələn variation selector daxil olan emoji-lər səhv bölünməsin)
+_EMOJI_KEYS_SORTED = sorted(PREMIUM_EMOJI_MAP.keys(), key=len, reverse=True)
 
 # ===== DATABASE CONNECTION POOL =====
 db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, DATABASE_URL)
@@ -95,13 +124,11 @@ def init_db():
             referral_date TEXT
         )''')
 
-        # log_message_id sütunu yoxdursa əlavə et (köhnə DB-lər üçün)
         try:
             c.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS log_message_id BIGINT")
         except Exception:
             pass
 
-        # Köhnə DB-lər üçün doğrulama sütunları (yoxdursa əlavə et)
         try:
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE")
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_answer INTEGER")
@@ -122,7 +149,6 @@ def init_db():
         conn.commit()
         c.close()
 
-        # Default məhsulları əlavə et (yoxdursa)
         _seed_products(conn)
 
         logger.info("Database başlatıldı")
@@ -130,7 +156,6 @@ def init_db():
         put_conn(conn)
 
 def _seed_products(conn):
-    """TikTok 10k İzlenme və Telegram 1k Abone məhsullarını əlavə et (yalnız boşdursa)"""
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
         c.execute("SELECT COUNT(*) as cnt FROM products")
@@ -473,9 +498,118 @@ LANG = {
     }
 }
 
+# ===== PREMIUM EMOJİ + HTML -> (text, entities) CONVERTER =====
+# Telegram API parse_mode və entities-i eyni anda qəbul etmir, ona görə
+# mövcud <b>/<i> HTML taglarını əl ilə entity-yə çeviririk, eyni zamanda
+# mətndəki unicode emoji-ləri premium custom_emoji entity-lərinə çeviririk.
+
+def render_with_premium_emoji(html_text):
+    """
+    HTML-bənzər mətni (yalnız <b> və <i> dəstəklənir) plain mətnə çevirir,
+    bold/italic/custom_emoji üçün MessageEntity siyahısı qaytarır.
+    Qaytarır: (plain_text, [MessageEntity, ...])
+    """
+    entities = []
+    plain_parts = []
+    plain_len = 0  # UTF-16 kod vahidi sayğacı (Telegram entity offset-ləri belə hesablanır)
+
+    def utf16_len(s):
+        return len(s.encode('utf-16-le')) // 2
+
+    # Tag yığını: (tag_adı, başlanğıc_offset)
+    stack = []
+    pos = 0
+    tag_pattern = re.compile(r'</?(b|i)>')
+
+    for m in tag_pattern.finditer(html_text):
+        # Tag-dan əvvəlki düz mətni emoji-ləri çevirərək əlavə et
+        chunk = html_text[pos:m.start()]
+        if chunk:
+            plain_len = _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
+        pos = m.end()
+
+        tag_text = m.group(0)
+        tag_name = m.group(1)
+        if tag_text.startswith('</'):
+            # bağlanış tagı -> yığından uyğun açılışı tap
+            for i in range(len(stack) - 1, -1, -1):
+                if stack[i][0] == tag_name:
+                    _, start_offset = stack.pop(i)
+                    length = plain_len - start_offset
+                    if length > 0:
+                        ent_type = MessageEntity.BOLD if tag_name == 'b' else MessageEntity.ITALIC
+                        entities.append(MessageEntity(type=ent_type, offset=start_offset, length=length))
+                    break
+        else:
+            stack.append((tag_name, plain_len))
+
+    # Qalan mətn
+    chunk = html_text[pos:]
+    if chunk:
+        plain_len = _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
+
+    plain_text = ''.join(plain_parts)
+    # Entity-ləri offset-ə görə sırala (Telegram bunu tələb edir)
+    entities.sort(key=lambda e: e.offset)
+    return plain_text, entities
+
+def _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len):
+    """Düz mətn parçasını emoji-lərə görə bölüb premium custom_emoji entity-ləri yaradır."""
+    i = 0
+    n = len(chunk)
+    while i < n:
+        matched = False
+        for emoji_char in _EMOJI_KEYS_SORTED:
+            elen = len(emoji_char)
+            if chunk[i:i + elen] == emoji_char:
+                custom_id = PREMIUM_EMOJI_MAP[emoji_char]
+                # Telegram custom_emoji entity-si üçün placeholder mətn olaraq
+                # orijinal emoji-nin özünü saxlamaq tövsiyə olunur (placeholder kimi göstərir)
+                plain_parts.append(emoji_char)
+                elen_utf16 = utf16_len(emoji_char)
+                entities.append(MessageEntity(
+                    type=MessageEntity.CUSTOM_EMOJI,
+                    offset=plain_len,
+                    length=elen_utf16,
+                    custom_emoji_id=custom_id
+                ))
+                plain_len += elen_utf16
+                i += elen
+                matched = True
+                break
+        if not matched:
+            ch = chunk[i]
+            plain_parts.append(ch)
+            plain_len += utf16_len(ch)
+            i += 1
+    return plain_len
+
+async def send_rich(bot, chat_id, html_text, reply_markup=None):
+    """parse_mode əvəzinə entities ilə premium-emoji-uyğun mesaj göndərir."""
+    plain_text, entities = render_with_premium_emoji(html_text)
+    return await bot.send_message(chat_id, plain_text, entities=entities, reply_markup=reply_markup)
+
+async def reply_rich(message, html_text, reply_markup=None):
+    plain_text, entities = render_with_premium_emoji(html_text)
+    return await message.reply_text(plain_text, entities=entities, reply_markup=reply_markup)
+
+async def edit_rich(query, html_text, reply_markup=None):
+    plain_text, entities = render_with_premium_emoji(html_text)
+    try:
+        await query.edit_message_text(plain_text, entities=entities, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            try:
+                await query.answer()
+            except Exception:
+                pass
+        else:
+            logger.error(f"edit_rich error: {e}")
+    except Exception as e:
+        logger.error(f"edit_rich unexpected error: {e}")
+
 # ===== HELPER FUNCTIONS =====
 def is_admin(user_id):
-    """Həm əsas admin həm də əlavə edilmiş adminlər"""
     if user_id == ADMIN_ID:
         return True
     conn = get_conn()
@@ -570,9 +704,6 @@ def clear_pending_referrer(user_id):
         put_conn(conn)
 
 async def credit_referral(context, referrer_id, referred_user_id, referred_name):
-    """Doğrulamadan keçən yeni istifadəçi üçün referans bonusunu hesablayır
-    (saxta /start botlarının referansı boş yerə artırmasının qarşısını almaq üçün
-    bu, yalnız təhlükəsizlik sualı düzgün cavablandıqdan sonra çağırılır)."""
     conn = get_conn()
     referrer = None
     try:
@@ -603,19 +734,19 @@ async def credit_referral(context, referrer_id, referred_user_id, referred_name)
         ref_lang = get_user_language(referrer)
         notify = ('🤝 Yeni bir kişi linkinizle katıldı!\n➕ +{} Puan kazandınız!' if ref_lang == 'TR'
                   else '🤝 Someone joined using your link!\n➕ You earned +{} Points!').format(bonus)
-        await context.bot.send_message(referrer_id, notify)
+        await send_rich(context.bot, referrer_id, notify)
     except Exception as e:
         logger.error(f"referrer notify error: {e}")
 
     referrer_name = referrer.get('username') or str(referrer_id)
     log_text = (
         f"🤝 <b>Yeni Referans</b>\n\n"
-        f"👤 <b>Referans Veren:</b> {referrer_name} (<code>{referrer_id}</code>)\n"
-        f"👤 <b>Yeni Üye:</b> {referred_name} (<code>{referred_user_id}</code>)\n"
+        f"👤 <b>Referans Veren:</b> {referrer_name} ({referrer_id})\n"
+        f"👤 <b>Yeni Üye:</b> {referred_name} ({referred_user_id})\n"
         f"📅 <b>Tarih:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
     try:
-        await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
+        await send_rich(context.bot, LOG_CHANNEL, log_text)
     except Exception as e:
         logger.error(f"referral log channel error: {e}")
 
@@ -638,18 +769,8 @@ def get_text(key, lang_or_user_id, **kwargs):
     return text.format(**kwargs) if kwargs else text
 
 async def safe_edit(query, text, reply_markup=None):
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            try:
-                await query.answer()
-            except Exception:
-                pass
-        else:
-            logger.error(f"safe_edit error: {e}")
-    except Exception as e:
-        logger.error(f"safe_edit unexpected error: {e}")
+    """Geriyə uyğunluq üçün saxlanılan ad - artıq premium emoji render edir."""
+    await edit_rich(query, text, reply_markup)
 
 def get_products_by_category(category, vip_only=None):
     conn = get_conn()
@@ -722,7 +843,6 @@ def back_to_menu_markup(lang):
     return InlineKeyboardMarkup([[InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]])
 
 def is_valid_url(url):
-    """Sadə URL yoxlama"""
     pattern = re.compile(
         r'^https?://'
         r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
@@ -762,9 +882,9 @@ async def send_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     keyboard = InlineKeyboardMarkup(rows)
 
     if update.message:
-        await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        await reply_rich(update.message, text, keyboard)
     elif update.callback_query:
-        await safe_edit(update.callback_query, text, keyboard)
+        await edit_rich(update.callback_query, text, keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
@@ -781,7 +901,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         create_user(user_id, tg_user.username or f"User{user_id}")
         existing_user = get_user(user_id)
 
-        # Referans linki varsa saxla — bonus yalnız təhlükəsizlik sualı keçildikdən sonra veriləcək
         if update.message and context.args:
             try:
                 referrer_id = int(context.args[0])
@@ -790,7 +909,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (ValueError, IndexError):
                 pass
 
-    # Doğrulamadan keçməyibsə menyu əvəzinə təhlükəsizlik sualı göstər
     if not existing_user.get('is_verified', True):
         await send_captcha(update, context, user_id)
         return
@@ -800,9 +918,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = get_text('welcome', lang)
 
     if update.message:
-        await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        await reply_rich(update.message, welcome_text, reply_markup)
     elif update.callback_query:
-        await safe_edit(update.callback_query, welcome_text, reply_markup)
+        await edit_rich(update.callback_query, welcome_text, reply_markup)
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -859,7 +977,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Botu Kullanmak için /start kullan"
                 )
                 try:
-                    await query.edit_message_text(success_text, parse_mode=ParseMode.HTML)
+                    plain_text, entities = render_with_premium_emoji(success_text)
+                    await query.edit_message_text(plain_text, entities=entities)
                 except Exception as e:
                     logger.error(f"captcha success edit error: {e}")
 
@@ -1178,7 +1297,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             stock_text = 'Sınırsız' if product['stock'] >= 999999 else str(product['stock'])
 
-            # Kategori bazlı geri dönüş butonu
             if product['category'] == 'TikTok':
                 back_cb = 'shop_tiktok'
             elif product['category'] == 'Telegram':
@@ -1218,7 +1336,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await answer_once('❌ Ürün bulunamadı!', show_alert=True)
                 return
 
-            # Bakiye kontrolü
             if user['balance'] < product['price']:
                 needed = product['price']
                 text = (
@@ -1229,7 +1346,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit(query, text, back_markup)
                 return
 
-            # Bakiye yeterliyse link iste
             await answer_once()
             context.user_data['awaiting_profile_link'] = True
             context.user_data['pending_product_id'] = product_id
@@ -1282,7 +1398,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ADMIN ORDER ACTIONS =====
 async def _admin_approve_order(query, context, order_id, lang):
-    """Admin siparişi onaylar → log kanalında günceller, kullanıcıya bildirim + Tamamla butonu"""
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1312,7 +1427,6 @@ async def _admin_approve_order(query, context, order_id, lang):
 
     await query.answer('✅ Sipariş onaylandı!', show_alert=True)
 
-    # Log kanalını güncelle
     log_text = (
         f"✅ <b>Sipariş Onaylandı</b>\n\n"
         f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
@@ -1326,35 +1440,34 @@ async def _admin_approve_order(query, context, order_id, lang):
         [InlineKeyboardButton('🏁 Siparişi Tamamla', callback_data=f'admin_complete_{order_id}')]
     ])
     try:
+        plain_text, entities = render_with_premium_emoji(log_text)
         if order.get('log_message_id'):
             await context.bot.edit_message_text(
                 chat_id=LOG_CHANNEL,
                 message_id=order['log_message_id'],
-                text=log_text,
-                parse_mode=ParseMode.HTML,
+                text=plain_text,
+                entities=entities,
                 reply_markup=complete_markup
             )
         else:
-            await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML, reply_markup=complete_markup)
+            await context.bot.send_message(LOG_CHANNEL, plain_text, entities=entities, reply_markup=complete_markup)
     except Exception as e:
         logger.error(f"log channel update error: {e}")
 
-    # Kullanıcıya bildir
     try:
-        await context.bot.send_message(
+        await send_rich(
+            context.bot,
             order['user_id'],
             f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
-            f"⏳ Siparişiniz işleme alındı, yakında tamamlanacak.",
-            parse_mode=ParseMode.HTML
+            f"⏳ Siparişiniz işleme alındı, yakında tamamlanacak."
         )
     except Exception as e:
         logger.error(f"user notify error: {e}")
 
 async def _admin_reject_order(query, context, order_id, lang):
-    """Admin siparişi reddeder → puanı iade eder"""
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1396,32 +1509,32 @@ async def _admin_reject_order(query, context, order_id, lang):
         f"📅 <b>Tarih:</b> {order['order_date']}"
     )
     try:
+        plain_text, entities = render_with_premium_emoji(log_text)
         if order.get('log_message_id'):
             await context.bot.edit_message_text(
                 chat_id=LOG_CHANNEL,
                 message_id=order['log_message_id'],
-                text=log_text,
-                parse_mode=ParseMode.HTML
+                text=plain_text,
+                entities=entities
             )
         else:
-            await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
+            await context.bot.send_message(LOG_CHANNEL, plain_text, entities=entities)
     except Exception as e:
         logger.error(f"log channel update error: {e}")
 
     try:
-        await context.bot.send_message(
+        await send_rich(
+            context.bot,
             order['user_id'],
             f"🔴 <b>Siparişiniz Reddedildi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
-            f"💵 <b>{order['product_price']} Puan</b> hesabınıza iade edildi.",
-            parse_mode=ParseMode.HTML
+            f"💵 <b>{order['product_price']} Puan</b> hesabınıza iade edildi."
         )
     except Exception as e:
         logger.error(f"user notify error: {e}")
 
 async def _admin_complete_order(query, context, order_id, lang):
-    """Admin siparişi tamamlar"""
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1461,27 +1574,28 @@ async def _admin_complete_order(query, context, order_id, lang):
         f"📅 <b>Tarih:</b> {order['order_date']}"
     )
     try:
+        plain_text, entities = render_with_premium_emoji(log_text)
         if order.get('log_message_id'):
             await context.bot.edit_message_text(
                 chat_id=LOG_CHANNEL,
                 message_id=order['log_message_id'],
-                text=log_text,
-                parse_mode=ParseMode.HTML
+                text=plain_text,
+                entities=entities
             )
         else:
-            await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
+            await context.bot.send_message(LOG_CHANNEL, plain_text, entities=entities)
     except Exception as e:
         logger.error(f"log channel update error: {e}")
 
     try:
-        await context.bot.send_message(
+        await send_rich(
+            context.bot,
             order['user_id'],
             f"🟢 <b>Siparişiniz Tamamlandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
-            f"✅ Siparişiniz başarıyla teslim edilmiştir. İyi kullanımlar!",
-            parse_mode=ParseMode.HTML
+            f"✅ Siparişiniz başarıyla teslim edilmiştir. İyi kullanımlar!"
         )
     except Exception as e:
         logger.error(f"user notify error: {e}")
@@ -1498,10 +1612,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == '/iptal':
             context.user_data['awaiting_profile_link'] = False
             context.user_data['pending_product_id'] = None
-            await update.message.reply_text(
-                '❌ Sipariş iptal edildi.',
-                parse_mode=ParseMode.HTML
-            )
+            await reply_rich(update.message, '❌ Sipariş iptal edildi.')
             return
 
         product_id = context.user_data.get('pending_product_id')
@@ -1509,15 +1620,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['awaiting_profile_link'] = False
             return
 
-        # URL yoxlama
         if not is_valid_url(text.strip()):
-            await update.message.reply_text(
-                '❌ <b>Yanlış Bağlantı!</b>\n\nGeçerli bir URL girin (https:// ile başlamalı).\nTekrar deneyin veya /iptal yazın.',
-                parse_mode=ParseMode.HTML
+            await reply_rich(
+                update.message,
+                '❌ <b>Yanlış Bağlantı!</b>\n\nGeçerli bir URL girin (https:// ile başlamalı).\nTekrar deneyin veya /iptal yazın.'
             )
             return
 
-        # Məhsulu yenidən al
         conn = get_conn()
         try:
             c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1532,26 +1641,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not product:
             context.user_data['awaiting_profile_link'] = False
             context.user_data['pending_product_id'] = None
-            await update.message.reply_text('❌ Ürün bulunamadı!', parse_mode=ParseMode.HTML)
+            await reply_rich(update.message, '❌ Ürün bulunamadı!')
             return
 
-        # Bakiye yenidən yoxla
         user = get_user(user_id)
         if user['balance'] < product['price']:
             context.user_data['awaiting_profile_link'] = False
             context.user_data['pending_product_id'] = None
-            await update.message.reply_text(
+            await reply_rich(
+                update.message,
                 f"👎 <b>Yetersiz Bakiye!</b>\n\n"
                 f"💵 <b>{product['price']} Puana</b> ihtiyacınız var.\n"
-                f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>",
-                parse_mode=ParseMode.HTML
+                f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>"
             )
             return
 
         profile_link = text.strip()
         order_date = datetime.now().strftime('%Y-%m-%d %H:%M')
 
-        # Sipariş yarat, balansı düş
         conn = get_conn()
         try:
             c = conn.cursor()
@@ -1568,7 +1675,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"order create error: {e}")
             conn.rollback()
             put_conn(conn)
-            await update.message.reply_text(get_text('generic_error', lang), parse_mode=ParseMode.HTML)
+            await reply_rich(update.message, get_text('generic_error', lang))
             return
         finally:
             put_conn(conn)
@@ -1578,19 +1685,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         new_balance = user['balance'] - product['price']
 
-        # Kullanıcıya onay mesajı
-        await update.message.reply_text(
+        await reply_rich(
+            update.message,
             f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {product['name']}\n"
             f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
             f"🔗 <b>Bağlantı:</b> {profile_link}\n"
             f"💎 <b>Yeni Bakiye:</b> {new_balance} Puan\n\n"
-            f"⏳ <b>Siparişiniz Beklemede</b>",
-            parse_mode=ParseMode.HTML
+            f"⏳ <b>Siparişiniz Beklemede</b>"
         )
 
-        # Log kanalına gönder
         log_text = (
             f"🛒 <b>Sipariş Geldi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
@@ -1607,13 +1712,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         ])
         try:
+            plain_text, entities = render_with_premium_emoji(log_text)
             log_msg = await context.bot.send_message(
                 LOG_CHANNEL,
-                log_text,
-                parse_mode=ParseMode.HTML,
+                plain_text,
+                entities=entities,
                 reply_markup=log_markup
             )
-            # log_message_id-ni saxla
             conn2 = get_conn()
             try:
                 c2 = conn2.cursor()
@@ -1633,30 +1738,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif context.user_data.get('awaiting_transfer'):
         if text == '/iptal':
             context.user_data['awaiting_transfer'] = False
-            await update.message.reply_text(get_text('transfer_cancelled', lang))
+            await reply_rich(update.message, get_text('transfer_cancelled', lang))
             return
 
         try:
             parts = text.split('|')
             if len(parts) != 2:
-                await update.message.reply_text(get_text('transfer_format_error', lang))
+                await reply_rich(update.message, get_text('transfer_format_error', lang))
                 return
 
             receiver_id = int(parts[0].strip())
             amount = int(parts[1].strip())
 
             if amount <= 0:
-                await update.message.reply_text(get_text('transfer_format_error', lang))
+                await reply_rich(update.message, get_text('transfer_format_error', lang))
                 return
 
             if receiver_id == user_id:
-                await update.message.reply_text('❌ Kendinize transfer yapamazsınız!' if lang == 'TR' else "❌ You can't transfer to yourself!")
+                await reply_rich(update.message, '❌ Kendinize transfer yapamazsınız!' if lang == 'TR' else "❌ You can't transfer to yourself!")
                 return
 
             if not user or user['balance'] < amount + 1:
                 needed = amount + 1
                 balance = user['balance'] if user else 0
-                await update.message.reply_text(get_text('insufficient_balance', lang, needed=needed, balance=balance))
+                await reply_rich(update.message, get_text('insufficient_balance', lang, needed=needed, balance=balance))
                 return
 
             today = datetime.now().strftime('%Y-%m-%d')
@@ -1665,12 +1770,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 daily_left = max(0, 2 - user['daily_transfer_count'])
             if daily_left <= 0:
                 context.user_data['awaiting_transfer'] = False
-                await update.message.reply_text(get_text('transfer_limit_reached', lang))
+                await reply_rich(update.message, get_text('transfer_limit_reached', lang))
                 return
 
             receiver = get_user(receiver_id)
             if not receiver:
-                await update.message.reply_text('❌ Alıcı kullanıcı bulunamadı!' if lang == 'TR' else '❌ Recipient not found!')
+                await reply_rich(update.message, '❌ Alıcı kullanıcı bulunamadı!' if lang == 'TR' else '❌ Recipient not found!')
                 return
 
             conn = get_conn()
@@ -1689,7 +1794,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"transfer error: {e}")
                 conn.rollback()
-                await update.message.reply_text('❌ Transfer yapılamadı!' if lang == 'TR' else '❌ Transfer failed!')
+                await reply_rich(update.message, '❌ Transfer yapılamadı!' if lang == 'TR' else '❌ Transfer failed!')
                 return
             finally:
                 put_conn(conn)
@@ -1697,11 +1802,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['awaiting_transfer'] = False
             new_balance = user['balance'] - (amount + 1)
             success_msg = get_text('transfer_success', lang, amount=amount, receiver_id=receiver_id, new_balance=new_balance)
-            await update.message.reply_text(success_msg)
+            await reply_rich(update.message, success_msg)
 
             log_msg = f"💸 YENİ TRANSFER\n\n👤 Gönderen: {user_id}\n👤 Alan: {receiver_id}\n💎 Miktar: {amount}\n💰 Komisyon: 1\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             try:
-                await context.bot.send_message(LOG_CHANNEL, log_msg)
+                await send_rich(context.bot, LOG_CHANNEL, log_msg)
             except Exception as e:
                 logger.error(f"log channel error: {e}")
 
@@ -1709,31 +1814,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             receiver_msg = (f"✅ {user_id} sizə {amount} Puan gönderdi!\n💎 Yeni Bakiye: {receiver['balance'] + amount}" if receiver_lang == 'TR'
                              else f"✅ {user_id} sent you {amount} Points!\n💎 New Balance: {receiver['balance'] + amount}")
             try:
-                await context.bot.send_message(receiver_id, receiver_msg)
+                await send_rich(context.bot, receiver_id, receiver_msg)
             except Exception as e:
                 logger.error(f"receiver notify error: {e}")
 
         except ValueError:
-            await update.message.reply_text(get_text('transfer_format_error', lang))
+            await reply_rich(update.message, get_text('transfer_format_error', lang))
 
     # ===== SUPPORT BEKLEME =====
     elif context.user_data.get('awaiting_support'):
         if text == '/iptal':
             context.user_data['awaiting_support'] = False
-            await update.message.reply_text(get_text('support_cancelled', lang))
+            await reply_rich(update.message, get_text('support_cancelled', lang))
             return
 
         context.user_data['awaiting_support'] = False
         support_log = f"💬 YENİ DESTEK MESAJI\n\n👤 Kullanıcı: {user_id}\n💬 Mesaj:\n{text}\n\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         try:
-            await context.bot.send_message(LOG_CHANNEL, support_log)
+            await send_rich(context.bot, LOG_CHANNEL, support_log)
         except Exception as e:
             logger.error(f"support log channel error: {e}")
         try:
             await context.bot.send_message(ADMIN_ID, f"Yeni destek mesajı:\n\nKullanıcı: {user_id}\nMesaj: {text}")
         except Exception as e:
             logger.error(f"support admin notify error: {e}")
-        await update.message.reply_text(get_text('support_sent', lang))
+        await reply_rich(update.message, get_text('support_sent', lang))
 
 # ===== ADMIN COMMANDS =====
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1824,7 +1929,7 @@ async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         vip_tag = '👑' if p['vip_only'] else ''
         stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
         text += f"<b>ID: {p['product_id']}</b> | {p['name']} ({p['category']}) | 💰{p['price']} | 📦{stock_text} {vip_tag}\n"
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await reply_rich(update.message, text)
 
 async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.message.from_user.id):
@@ -1900,7 +2005,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'🛍️ <b>Toplam Ürün:</b> {total_products}\n'
             f'📅 <b>Tarih:</b> {datetime.now().strftime("%Y-%m-%d %H:%M")}'
         )
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await reply_rich(update.message, text)
     except Exception as e:
         logger.error(f"stats error: {e}")
         await update.message.reply_text(f'❌ Hata: {str(e)}')
@@ -1908,7 +2013,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         put_conn(conn)
 
 async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bekleyen siparişleri listele"""
     if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
@@ -1939,11 +2043,10 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<b>#{o['order_id']}</b> | {o['product_name']} | {o['product_price']}P\n"
             f"👤 {o['user_id']} | 🔗 {o['profile_link']}\n\n"
         )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await reply_rich(update.message, text)
 
 
 async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yalnız əsas admin istifadə edə bilər: /yetki <user_id>"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
         return
@@ -1963,13 +2066,13 @@ async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (target_id, ADMIN_ID, datetime.now().strftime('%Y-%m-%d %H:%M'))
             )
             conn.commit()
-            await update.message.reply_text(
+            await reply_rich(
+                update.message,
                 f"✅ <b>{target_id}</b> ID'li kullanıcıya yetki verildi!\n\n"
                 f"Bu kişi artık:\n"
                 f"• Log kanalında siparişleri onaylayabilir/reddedebilir\n"
                 f"• /bakiyeartir komutuyla puan ekleyebilir\n\n"
-                f"Yetkiyi kaldırmak için: /yetkikal {target_id}",
-                parse_mode=ParseMode.HTML
+                f"Yetkiyi kaldırmak için: /yetkikal {target_id}"
             )
         except Exception as e:
             logger.error(f"cmd_yetki error: {e}")
@@ -1981,7 +2084,6 @@ async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
 
 async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yetkini geri al: /yetkikal <user_id>"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
         return
@@ -1997,7 +2099,7 @@ async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             deleted = c.rowcount
             conn.commit()
             if deleted:
-                await update.message.reply_text(f"✅ <b>{target_id}</b> ID'li kullanıcının yetkisi kaldırıldı!", parse_mode=ParseMode.HTML)
+                await reply_rich(update.message, f"✅ <b>{target_id}</b> ID'li kullanıcının yetkisi kaldırıldı!")
             else:
                 await update.message.reply_text(f'⚠️ {target_id} zaten yetkili değil!')
         except Exception as e:
@@ -2010,7 +2112,6 @@ async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
 
 async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Yetkili adminləri göstər"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
@@ -2033,7 +2134,7 @@ async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for a in admins:
         text += f"🔹 <b>{a['admin_id']}</b> — {a['added_date']}\n"
     text += f'\n🔸 <b>Ana Admin:</b> {ADMIN_ID}'
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await reply_rich(update.message, text)
 
 
 # ===== MAIN =====
