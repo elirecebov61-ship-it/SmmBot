@@ -1810,11 +1810,11 @@ async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             conn.commit()
             await update.message.reply_text(
-                f'✅ <b>{target_id}</b> ID'li kullanıcıya yetki verildi!\n\n'
-                f'Bu kişi artık:\n'
-                f'• Log kanalında siparişleri onaylayabilir/reddedebilir\n'
-                f'• /admin_give komutuyla puan ekleyebilir\n\n'
-                f'Yetkiyi kaldırmak için: /yetkikal {target_id}',
+                f"✅ <b>{target_id}</b> ID'li kullanıcıya yetki verildi!\n\n"
+                f"Bu kişi artık:\n"
+                f"• Log kanalında siparişleri onaylayabilir/reddedebilir\n"
+                f"• /admin_give komutuyla puan ekleyebilir\n\n"
+                f"Yetkiyi kaldırmak için: /yetkikal {target_id}",
                 parse_mode=ParseMode.HTML
             )
         except Exception as e:
@@ -1843,7 +1843,7 @@ async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             deleted = c.rowcount
             conn.commit()
             if deleted:
-                await update.message.reply_text(f'✅ <b>{target_id}</b> ID'li kullanıcının yetkisi kaldırıldı!', parse_mode=ParseMode.HTML)
+                await update.message.reply_text(f"✅ <b>{target_id}</b> ID'li kullanıcının yetkisi kaldırıldı!", parse_mode=ParseMode.HTML)
             else:
                 await update.message.reply_text(f'⚠️ {target_id} zaten yetkili değil!')
         except Exception as e:
