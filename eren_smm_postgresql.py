@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import random
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
@@ -51,7 +52,10 @@ def init_db():
             daily_transfer_count INTEGER DEFAULT 0,
             last_transfer_date TEXT,
             language TEXT DEFAULT 'TR',
-            registration_date TEXT
+            registration_date TEXT,
+            is_verified BOOLEAN DEFAULT TRUE,
+            captcha_answer INTEGER,
+            pending_referrer BIGINT
         )''')
 
         c.execute('''CREATE TABLE IF NOT EXISTS products (
@@ -94,6 +98,14 @@ def init_db():
         # log_message_id sütunu yoxdursa əlavə et (köhnə DB-lər üçün)
         try:
             c.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS log_message_id BIGINT")
+        except Exception:
+            pass
+
+        # Köhnə DB-lər üçün doğrulama sütunları (yoxdursa əlavə et)
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE")
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_answer INTEGER")
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_referrer BIGINT")
         except Exception:
             pass
 
@@ -492,8 +504,8 @@ def create_user(user_id, username):
     conn = get_conn()
     try:
         c = conn.cursor()
-        c.execute('''INSERT INTO users (user_id, username, balance, registration_date)
-                     VALUES (%s, %s, %s, %s)
+        c.execute('''INSERT INTO users (user_id, username, balance, registration_date, is_verified)
+                     VALUES (%s, %s, %s, %s, FALSE)
                      ON CONFLICT (user_id) DO NOTHING''',
                   (user_id, username, START_BALANCE, datetime.now().strftime('%Y-%m-%d %H:%M')))
         conn.commit()
@@ -512,6 +524,100 @@ def update_balance(user_id, amount):
         logger.error(f"update_balance error: {e}")
     finally:
         put_conn(conn)
+
+def set_pending_referrer(user_id, referrer_id):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('UPDATE users SET pending_referrer = %s WHERE user_id = %s', (referrer_id, user_id))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"set_pending_referrer error: {e}")
+    finally:
+        put_conn(conn)
+
+def set_captcha_answer(user_id, answer):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('UPDATE users SET captcha_answer = %s WHERE user_id = %s', (answer, user_id))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"set_captcha_answer error: {e}")
+    finally:
+        put_conn(conn)
+
+def set_verified(user_id):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('UPDATE users SET is_verified = TRUE, captcha_answer = NULL WHERE user_id = %s', (user_id,))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"set_verified error: {e}")
+    finally:
+        put_conn(conn)
+
+def clear_pending_referrer(user_id):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('UPDATE users SET pending_referrer = NULL WHERE user_id = %s', (user_id,))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"clear_pending_referrer error: {e}")
+    finally:
+        put_conn(conn)
+
+async def credit_referral(context, referrer_id, referred_user_id, referred_name):
+    """Doğrulamadan keçən yeni istifadəçi üçün referans bonusunu hesablayır
+    (saxta /start botlarının referansı boş yerə artırmasının qarşısını almaq üçün
+    bu, yalnız təhlükəsizlik sualı düzgün cavablandıqdan sonra çağırılır)."""
+    conn = get_conn()
+    referrer = None
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('SELECT 1 FROM referrals WHERE referrer_id = %s AND referred_user_id = %s',
+                 (referrer_id, referred_user_id))
+        if c.fetchone():
+            return
+        c.execute('SELECT * FROM users WHERE user_id = %s', (referrer_id,))
+        referrer = c.fetchone()
+        if not referrer:
+            return
+        bonus = 2 if referrer['vip_status'] else 1
+        c.execute('''INSERT INTO referrals (referrer_id, referred_user_id, referral_date)
+                   VALUES (%s, %s, %s)''',
+                 (referrer_id, referred_user_id, datetime.now().strftime('%Y-%m-%d %H:%M')))
+        c.execute('UPDATE users SET referrals = referrals + 1, balance = balance + %s WHERE user_id = %s',
+                 (bonus, referrer_id))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"credit_referral db error: {e}")
+        conn.rollback()
+        return
+    finally:
+        put_conn(conn)
+
+    try:
+        ref_lang = get_user_language(referrer)
+        notify = ('🤝 Yeni bir kişi linkinizle katıldı!\n➕ +{} Puan kazandınız!' if ref_lang == 'TR'
+                  else '🤝 Someone joined using your link!\n➕ You earned +{} Points!').format(bonus)
+        await context.bot.send_message(referrer_id, notify)
+    except Exception as e:
+        logger.error(f"referrer notify error: {e}")
+
+    referrer_name = referrer.get('username') or str(referrer_id)
+    log_text = (
+        f"🤝 <b>Yeni Referans</b>\n\n"
+        f"👤 <b>Referans Veren:</b> {referrer_name} (<code>{referrer_id}</code>)\n"
+        f"👤 <b>Yeni Üye:</b> {referred_name} (<code>{referred_user_id}</code>)\n"
+        f"📅 <b>Tarih:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+    try:
+        await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"referral log channel error: {e}")
 
 def get_user_language(user_id_or_user):
     try:
@@ -627,6 +733,39 @@ def is_valid_url(url):
     return bool(pattern.match(url))
 
 # ===== MAIN HANDLERS =====
+async def send_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
+    a = random.randint(2, 15)
+    b = random.randint(1, 10)
+    correct = a + b
+    set_captcha_answer(user_id, correct)
+
+    options = {correct}
+    deltas = [-7, -5, -3, -2, -1, 1, 2, 3, 5, 7]
+    random.shuffle(deltas)
+    for d in deltas:
+        if len(options) >= 4:
+            break
+        fake = correct + d
+        if fake > 0:
+            options.add(fake)
+    options = list(options)
+    random.shuffle(options)
+
+    text = (
+        "🗓 <b>Güvenlik Doğrulaması</b> 🗓\n\n"
+        "⁉️ Soruyu çözün ⁉️\n\n"
+        f"<b>{a}</b> + <b>{b}</b> = ?\n\n"
+        "➕ Doğru cevabı seçin: ➕"
+    )
+    btns = [InlineKeyboardButton(str(opt), callback_data=f'captcha_{opt}') for opt in options]
+    rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
+    keyboard = InlineKeyboardMarkup(rows)
+
+    if update.message:
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    elif update.callback_query:
+        await safe_edit(update.callback_query, text, keyboard)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         tg_user = update.message.from_user
@@ -636,44 +775,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = tg_user.id
 
     existing_user = get_user(user_id)
-    if not existing_user:
+    is_new_user = existing_user is None
+
+    if is_new_user:
         create_user(user_id, tg_user.username or f"User{user_id}")
         existing_user = get_user(user_id)
 
-    if update.message and context.args:
-        try:
-            referrer_id = int(context.args[0])
-            if referrer_id != user_id:
-                conn = get_conn()
-                try:
-                    c = conn.cursor(cursor_factory=RealDictCursor)
-                    c.execute('SELECT 1 FROM referrals WHERE referrer_id = %s AND referred_user_id = %s',
-                             (referrer_id, user_id))
-                    if not c.fetchone():
-                        c.execute('SELECT * FROM users WHERE user_id = %s', (referrer_id,))
-                        referrer = c.fetchone()
-                        if referrer:
-                            bonus = 2 if referrer['vip_status'] else 1
-                            c.execute('''INSERT INTO referrals (referrer_id, referred_user_id, referral_date)
-                                       VALUES (%s, %s, %s)''',
-                                     (referrer_id, user_id, datetime.now().strftime('%Y-%m-%d %H:%M')))
-                            c.execute('UPDATE users SET referrals = referrals + 1, balance = balance + %s WHERE user_id = %s',
-                                     (bonus, referrer_id))
-                            conn.commit()
-                            try:
-                                ref_lang = get_user_language(referrer)
-                                notify = ('🤝 Yeni bir kişi linkinizle katıldı!\n➕ +{} Puan kazandınız!' if ref_lang == 'TR'
-                                          else '🤝 Someone joined using your link!\n➕ You earned +{} Points!').format(bonus)
-                                await context.bot.send_message(referrer_id, notify)
-                            except Exception as e:
-                                logger.error(f"referrer notify error: {e}")
-                except Exception as e:
-                    logger.error(f"referral db error: {e}")
-                    conn.rollback()
-                finally:
-                    put_conn(conn)
-        except (ValueError, IndexError):
-            pass
+        # Referans linki varsa saxla — bonus yalnız təhlükəsizlik sualı keçildikdən sonra veriləcək
+        if update.message and context.args:
+            try:
+                referrer_id = int(context.args[0])
+                if referrer_id != user_id and get_user(referrer_id):
+                    set_pending_referrer(user_id, referrer_id)
+            except (ValueError, IndexError):
+                pass
+
+    # Doğrulamadan keçməyibsə menyu əvəzinə təhlükəsizlik sualı göstər
+    if not existing_user.get('is_verified', True):
+        await send_captcha(update, context, user_id)
+        return
 
     reply_markup = main_menu_keyboard(existing_user)
     lang = get_user_language(existing_user)
@@ -711,15 +831,49 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     back_markup = back_to_menu_markup(lang)
 
     data_preview = query.data or ''
-    will_show_alert = (data_preview in ('daily_bonus', 'vip_shop')) or data_preview.startswith('buy_confirm_')
+    will_show_alert = (data_preview in ('daily_bonus', 'vip_shop')) or data_preview.startswith('buy_confirm_') or data_preview.startswith('captcha_')
     if not will_show_alert:
         await answer_once()
 
     try:
         data = query.data
 
+        # ===== GÜVENLİK DOĞRULAMASI =====
+        if data.startswith('captcha_'):
+            try:
+                guessed = int(data.split('_', 1)[1])
+            except ValueError:
+                await answer_once()
+                return
+
+            stored_answer = user.get('captcha_answer')
+            if stored_answer is None:
+                await answer_once()
+                return
+
+            if guessed == stored_answer:
+                set_verified(user_id)
+                await answer_once()
+                success_text = (
+                    "✅ <b>Doğrulama Başarılı</b>\n\n"
+                    "Botu Kullanmak için /start kullan"
+                )
+                try:
+                    await query.edit_message_text(success_text, parse_mode=ParseMode.HTML)
+                except Exception as e:
+                    logger.error(f"captcha success edit error: {e}")
+
+                pending_referrer = user.get('pending_referrer')
+                if pending_referrer:
+                    referred_name = query.from_user.username or query.from_user.first_name or str(user_id)
+                    await credit_referral(context, pending_referrer, user_id, referred_name)
+                    clear_pending_referrer(user_id)
+            else:
+                await answer_once('❌ Yanlış cevap! Tekrar deneyin.', show_alert=True)
+            return
+
         # ===== BALANCE / PROFILE =====
-        if data in ('balance', 'profile'):
+        elif data in ('balance', 'profile'):
             conn = get_conn()
             try:
                 c = conn.cursor()
@@ -1587,7 +1741,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 4:
-        await update.message.reply_text('📝 Kullanım: /admin_add_product "ad" kategori fiyat stok [vip]')
+        await update.message.reply_text('📝 Kullanım: /urunekle "ad" kategori fiyat stok [vip]')
         return
     try:
         vip_only = False
@@ -1623,7 +1777,7 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 2:
-        await update.message.reply_text('📝 Kullanım: /admin_stock <ürün_id> <yeni_stok>')
+        await update.message.reply_text('📝 Kullanım: /stokguncelle <ürün_id> <yeni_stok>')
         return
     try:
         product_id = int(context.args[0])
@@ -1677,7 +1831,7 @@ async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 2:
-        await update.message.reply_text('📝 Kullanım: /admin_give <user_id> <puan>')
+        await update.message.reply_text('📝 Kullanım: /bakiyeartir <user_id> <puan>')
         return
     try:
         target_user_id = int(context.args[0])
@@ -1697,7 +1851,7 @@ async def admin_set_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 2:
-        await update.message.reply_text('📝 Kullanım: /admin_vip <user_id> <on/off>')
+        await update.message.reply_text('📝 Kullanım: /vipver <user_id> <on/off>')
         return
     try:
         target_user_id = int(context.args[0])
@@ -1813,7 +1967,7 @@ async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ <b>{target_id}</b> ID'li kullanıcıya yetki verildi!\n\n"
                 f"Bu kişi artık:\n"
                 f"• Log kanalında siparişleri onaylayabilir/reddedebilir\n"
-                f"• /admin_give komutuyla puan ekleyebilir\n\n"
+                f"• /bakiyeartir komutuyla puan ekleyebilir\n\n"
                 f"Yetkiyi kaldırmak için: /yetkikal {target_id}",
                 parse_mode=ParseMode.HTML
             )
@@ -1893,13 +2047,13 @@ def main():
         handle_message
     ))
 
-    app.add_handler(CommandHandler('admin_add_product', admin_add_product))
-    app.add_handler(CommandHandler('admin_stock', admin_stock))
-    app.add_handler(CommandHandler('admin_products', admin_products))
-    app.add_handler(CommandHandler('admin_give', admin_give_points))
-    app.add_handler(CommandHandler('admin_vip', admin_set_vip))
-    app.add_handler(CommandHandler('admin_stats', admin_stats))
-    app.add_handler(CommandHandler('admin_orders', admin_orders))
+    app.add_handler(CommandHandler('urunekle', admin_add_product))
+    app.add_handler(CommandHandler('stokguncelle', admin_stock))
+    app.add_handler(CommandHandler('urunler', admin_products))
+    app.add_handler(CommandHandler('bakiyeartir', admin_give_points))
+    app.add_handler(CommandHandler('vipver', admin_set_vip))
+    app.add_handler(CommandHandler('istatistik', admin_stats))
+    app.add_handler(CommandHandler('siparisler', admin_orders))
     app.add_handler(CommandHandler('yetki', cmd_yetki))
     app.add_handler(CommandHandler('yetkikal', cmd_yetkikal))
     app.add_handler(CommandHandler('yetkiler', cmd_yetkiler))
