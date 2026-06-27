@@ -28,17 +28,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===== PREMIUM EMOJI MAP =====
-# Unicode emoji -> custom emoji ID
-# Mesajlardaki emoji-lər avtomatik premium custom_emoji entity-yə çevrilir.
+# Hər unicode emoji -> sənin premium custom emoji ID-n.
+# Mesaj göndərilərkən mətndəki bu emoji-lər avtomatik custom_emoji entity-yə çevrilir.
+# (Bu yalnız botun bağlı olduğu hesabda Telegram Premium varsa düzgün animasiyalı görünür;
+#  premium olmayan istifadəçilər bunları normal placeholder emoji kimi görür, bu normaldır.)
 PREMIUM_EMOJI_MAP = {
-    # Köhnə emoji-lər
     '❌': '6224185666704511761',
     '💎': '5251562950698759162',
     '👤': '4967667085606912536',
     '🛍': '4970023558068568720',
     '👑': '6266995104687330978',
-    '👍': '6224185666704511761',
+    '👍': '6224185666704511761',  # Günlük bonusdaki "alınmaz" emoji - ❌ ilə eyni custom emoji
     '📦': '5449683594425410231',
+    '💰': '5375338737028841420',
     '🤝': '6071278787947925866',
     '💬': '5352759161945867747',
     '❓': '5197269100878907942',
@@ -49,30 +51,10 @@ PREMIUM_EMOJI_MAP = {
     '⭐': '5267102644886853973',
     '🌞': '5402477260982731644',
     '👾': '5305444432118589379',
-    # Yeni emoji-lər
-    '☀️': '5402477260982731644',
-    '💡': '5472146462362048818',
-    '💼': '5249273776079640466',
-    '📆': '5274055917766202507',
-    '🛒': '5312361253610475399',
-    '💵': '5197434882321567830',
-    '🟢': '6073110518485227661',
-    '🟡': '5208447513475954676',
-    '🔴': '5411225014148014586',
-    '🔗': '5271604874419647061',
-    '⚠️': '5447644880824181073',
-    '⚠': '5447644880824181073',
-    '👇': '5231102735817918643',
-    '📋': '5197269100878907942',
-    '⁉️': '5314504236132747481',
-    '⁉': '5314504236132747481',
-    '📖': '5226512880362332956',
-    '💰': '5375338737028841420',
 }
-
-# Emoji-ləri uzunluğa görə sıralayırıq (uzun olanlar əvvəl yoxlanmalı)
+# Tək kod nöqtəli emoji-ləri uzunluğa görə sıralayırıq (uzun olanlar əvvəl yoxlanmalı,
+# məsələn variation selector daxil olan emoji-lər səhv bölünməsin)
 _EMOJI_KEYS_SORTED = sorted(PREMIUM_EMOJI_MAP.keys(), key=len, reverse=True)
-
 
 # ===== DATABASE CONNECTION POOL =====
 db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, DATABASE_URL)
@@ -203,7 +185,7 @@ LANG = {
         'welcome': '☀️ Merhaba\n\n👾 <b>Eren SMM TR</b>\nTürkiye\'nin güvenilir dijital ürün marketi.\n\nİşlem seçin:',
         'balance': '💎 Bakiye',
         'profile': '👤 Profilim',
-        'shop': '🛍 Mağaza',
+        'shop': '🛍️ Mağaza',
         'vip_button': '👑 VIP Ol • 20 Referans',
         'daily_bonus': '🎁 Günlük Bonus',
         'orders': '📦 Siparişlerim',
@@ -214,7 +196,7 @@ LANG = {
         'help': '❓ Yardım',
         'language': '🌍 Dil',
         'raffle': '🎲 Çekiliş',
-        'donate': '⭐ Bağış Yap',
+        'donate': '⭐️ Bağış Yap',
         'back_to_menu': '← Ana Merkeze Dön',
 
         'profile_text': (
@@ -274,14 +256,14 @@ LANG = {
         'vip_required_alert': '👑 Lütfen önce VIP olun!\nVIP mağazaya erişmek için VIP üyeliğiniz gerekiyor.',
 
         'vip_purchase_text': (
-            '👑 <b>VIP Satın Al</b>\n\n'
+            '👍 <b>VIP Satın Al</b>\n\n'
             'VIP olmak için <b>{required} referans</b> şart!\n\n'
             '👍 Mevcut referansınız: <b>{current}/{required}</b>\n'
             '👍 Eksik referans: <b>{missing} kişi</b> daha davet edin!\n\n'
-            '• 👑 <b>VIP Avantajları:</b>\n'
-            '• 💎 VIP Mağazaya erişim\n'
-            '• 🎁 Günde 2 kez günlük bonus\n'
-            '• 🤝 Her davette <b>+2 Puan</b>'
+            '• 👍 <b>VIP Avantajları:</b>\n'
+            '• 👍 VIP Mağazaya erişim\n'
+            '• 👍 Günde 2 kez günlük bonus\n'
+            '• 👍 Her davette <b>+2 Puan</b>'
         ),
         'vip_already': (
             '👑 <b>Zaten VIP üyesiniz!</b>\n\n'
@@ -321,12 +303,12 @@ LANG = {
         'no_active_raffle': '🎲 <b>Çekiliş</b>\n\n⚠️ Şu anda aktif bir çekiliş bulunmuyor.\n\n<i>Yeni çekilişler için takipte kalın!</i>',
 
         'donate_text': (
-            '⭐ <b>Bağış Yap</b>\n\n'
+            '⭐️ <b>Bağış Yap</b>\n\n'
             'Eren SMM TR olarak sizlere her zaman daha iyi, daha hızlı, daha uzun süre ve daha uygun fiyata hizmet verebilmek için büyük emek harcıyoruz.\n\n'
             'Eğer hizmetlerimizden memnun kaldıysanız, bize bir yıldız <b>bağışı</b> yaparak destek olabilirsiniz. Her katkı bizim için çok değerlidir. Sağ olun, var olun! 🙏\n\n'
             'Kaç yıldız <b>bağış</b> yapmak istersiniz?'
         ),
-        'donate_invoice_sent': '⭐ {stars} yıldızlık bağış faturası size özelden gönderildi. Lütfen ödemeyi tamamlayın.',
+        'donate_invoice_sent': '⭐️ {stars} yıldızlık bağış faturası size özelden gönderildi. Lütfen ödemeyi tamamlayın.',
 
         'help_text': (
             '📖 <b>YARDIM MERKEZİ</b> 📖\n\n'
@@ -373,7 +355,7 @@ LANG = {
         'welcome': '☀️ Hello\n\n👾 <b>Eren SMM TR</b>\nTurkey\'s trusted digital product marketplace.\n\nSelect an operation:',
         'balance': '💎 Balance',
         'profile': '👤 Profile',
-        'shop': '🛍 Shop',
+        'shop': '🛍️ Shop',
         'vip_button': '👑 Get VIP • 20 Referrals',
         'daily_bonus': '🎁 Daily Bonus',
         'orders': '📦 My Orders',
@@ -384,7 +366,7 @@ LANG = {
         'help': '❓ Help',
         'language': '🌍 Language',
         'raffle': '🎲 Raffle',
-        'donate': '⭐ Donate',
+        'donate': '⭐️ Donate',
         'back_to_menu': '← Back to Menu',
 
         'profile_text': (
@@ -444,14 +426,14 @@ LANG = {
         'vip_required_alert': '👑 Please become VIP first!\nVIP membership is required to access the VIP shop.',
 
         'vip_purchase_text': (
-            '👑 <b>Get VIP</b>\n\n'
+            '👍 <b>Get VIP</b>\n\n'
             '{required} referrals are required for VIP!\n\n'
             '👍 Your current referrals: <b>{current}/{required}</b>\n'
             '👍 Missing: <b>{missing} more people</b> to invite!\n\n'
-            '• 👑 <b>VIP Benefits:</b>\n'
-            '• 💎 VIP Shop access\n'
-            '• 🎁 Daily bonus twice a day\n'
-            '• 🤝 <b>+2 Points</b> per referral'
+            '• 👍 <b>VIP Benefits:</b>\n'
+            '• 👍 VIP Shop access\n'
+            '• 👍 Daily bonus twice a day\n'
+            '• 👍 <b>+2 Points</b> per referral'
         ),
         'vip_already': (
             '👑 <b>You are already a VIP member!</b>\n\n'
@@ -491,12 +473,12 @@ LANG = {
         'no_active_raffle': '🎲 <b>Raffle</b>\n\n⚠️ There is no active raffle right now.\n\n<i>Stay tuned for new raffles!</i>',
 
         'donate_text': (
-            '⭐ <b>Donate</b>\n\n'
+            '⭐️ <b>Donate</b>\n\n'
             'As Eren SMM TR, we work hard to always provide you better, faster, longer-lasting and more affordable service.\n\n'
             'If you are happy with our services, you can support us with a star <b>donation</b>. Every contribution means a lot to us. Thank you! 🙏\n\n'
             'How many stars would you like to <b>donate</b>?'
         ),
-        'donate_invoice_sent': '⭐ A {stars}-star donation invoice has been sent to you in private. Please complete the payment.',
+        'donate_invoice_sent': '⭐️ A {stars}-star donation invoice has been sent to you in private. Please complete the payment.',
 
         'help_text': (
             '📖 <b>HELP CENTER</b> 📖\n\n'
@@ -517,23 +499,30 @@ LANG = {
 }
 
 # ===== PREMIUM EMOJİ + HTML -> (text, entities) CONVERTER =====
+# Telegram API parse_mode və entities-i eyni anda qəbul etmir, ona görə
+# mövcud <b>/<i> HTML taglarını əl ilə entity-yə çeviririk, eyni zamanda
+# mətndəki unicode emoji-ləri premium custom_emoji entity-lərinə çeviririk.
+
 def render_with_premium_emoji(html_text):
     """
     HTML-bənzər mətni (yalnız <b> və <i> dəstəklənir) plain mətnə çevirir,
     bold/italic/custom_emoji üçün MessageEntity siyahısı qaytarır.
+    Qaytarır: (plain_text, [MessageEntity, ...])
     """
     entities = []
     plain_parts = []
-    plain_len = 0
+    plain_len = 0  # UTF-16 kod vahidi sayğacı (Telegram entity offset-ləri belə hesablanır)
 
     def utf16_len(s):
         return len(s.encode('utf-16-le')) // 2
 
+    # Tag yığını: (tag_adı, başlanğıc_offset)
     stack = []
     pos = 0
     tag_pattern = re.compile(r'</?(b|i)>')
 
     for m in tag_pattern.finditer(html_text):
+        # Tag-dan əvvəlki düz mətni emoji-ləri çevirərək əlavə et
         chunk = html_text[pos:m.start()]
         if chunk:
             plain_len = _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
@@ -542,6 +531,7 @@ def render_with_premium_emoji(html_text):
         tag_text = m.group(0)
         tag_name = m.group(1)
         if tag_text.startswith('</'):
+            # bağlanış tagı -> yığından uyğun açılışı tap
             for i in range(len(stack) - 1, -1, -1):
                 if stack[i][0] == tag_name:
                     _, start_offset = stack.pop(i)
@@ -553,11 +543,13 @@ def render_with_premium_emoji(html_text):
         else:
             stack.append((tag_name, plain_len))
 
+    # Qalan mətn
     chunk = html_text[pos:]
     if chunk:
         plain_len = _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
 
     plain_text = ''.join(plain_parts)
+    # Entity-ləri offset-ə görə sırala (Telegram bunu tələb edir)
     entities.sort(key=lambda e: e.offset)
     return plain_text, entities
 
@@ -571,6 +563,8 @@ def _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
             elen = len(emoji_char)
             if chunk[i:i + elen] == emoji_char:
                 custom_id = PREMIUM_EMOJI_MAP[emoji_char]
+                # Telegram custom_emoji entity-si üçün placeholder mətn olaraq
+                # orijinal emoji-nin özünü saxlamaq tövsiyə olunur (placeholder kimi göstərir)
                 plain_parts.append(emoji_char)
                 elen_utf16 = utf16_len(emoji_char)
                 entities.append(MessageEntity(
@@ -613,11 +607,6 @@ async def edit_rich(query, html_text, reply_markup=None):
             logger.error(f"edit_rich error: {e}")
     except Exception as e:
         logger.error(f"edit_rich unexpected error: {e}")
-
-# ===== BUTTON HELPER =====
-def btn(text, callback_data, style=None, icon_custom_emoji_id=None):
-    """InlineKeyboardButton yaradır. style/icon parametrləri gələcək üçün saxlanıb."""
-    return InlineKeyboardButton(text, callback_data=callback_data)
 
 # ===== HELPER FUNCTIONS =====
 def is_admin(user_id):
@@ -780,6 +769,7 @@ def get_text(key, lang_or_user_id, **kwargs):
     return text.format(**kwargs) if kwargs else text
 
 async def safe_edit(query, text, reply_markup=None):
+    """Geriyə uyğunluq üçün saxlanılan ad - artıq premium emoji render edir."""
     await edit_rich(query, text, reply_markup)
 
 def get_products_by_category(category, vip_only=None):
@@ -823,72 +813,34 @@ def main_menu_keyboard(user):
     is_vip = bool(user and user.get('vip_status'))
 
     if is_vip:
-        vip_row = [btn(
+        vip_row = [InlineKeyboardButton(
             '👑 VIP Üye' if lang == 'TR' else '👑 VIP Member',
-            'vip_already_info',
-            style=BTN_SUCCESS,
-            icon_custom_emoji_id='6266995104687330978'  # 👑
+            callback_data='vip_already_info'
         )]
     else:
-        vip_row = [btn(
-            get_text('vip_button', lang),
-            'vip_purchase',
-            style=BTN_PRIMARY,
-            icon_custom_emoji_id='6266995104687330978'  # 👑
-        )]
+        vip_row = [InlineKeyboardButton(get_text('vip_button', lang), callback_data='vip_purchase')]
 
     keyboard = [
-        [
-            btn(get_text('balance', lang), 'balance',
-                style=BTN_PRIMARY, icon_custom_emoji_id='5251562950698759162'),   # 💎
-            btn(get_text('profile', lang), 'profile',
-                style=BTN_PRIMARY, icon_custom_emoji_id='4967667085606912536'),   # 👤
-        ],
-        [
-            btn(get_text('shop', lang), 'shop',
-                style=BTN_PRIMARY, icon_custom_emoji_id='4970023558068568720'),   # 🛍
-            btn('👑 VIP Mağaza' if lang == 'TR' else '👑 VIP Shop', 'vip_shop',
-                style=BTN_SUCCESS, icon_custom_emoji_id='6266995104687330978'),   # 👑
-        ],
+        [InlineKeyboardButton(get_text('balance', lang), callback_data='balance'),
+         InlineKeyboardButton(get_text('profile', lang), callback_data='profile')],
+        [InlineKeyboardButton(get_text('shop', lang), callback_data='shop'),
+         InlineKeyboardButton('👑 VIP Mağaza' if lang == 'TR' else '👑 VIP Shop', callback_data='vip_shop')],
         vip_row,
-        [
-            btn(get_text('daily_bonus', lang), 'daily_bonus',
-                style=BTN_SUCCESS, icon_custom_emoji_id='5267102644886853973'),   # ⭐
-            btn(get_text('orders', lang), 'orders',
-                style=BTN_PRIMARY, icon_custom_emoji_id='5449683594425410231'),   # 📦
-        ],
-        [
-            btn(get_text('transfer', lang), 'transfer',
-                style=BTN_PRIMARY, icon_custom_emoji_id='5375338737028841420'),   # 💰
-            btn(get_text('coupon', lang), 'coupon',
-                style=BTN_PRIMARY, icon_custom_emoji_id='5267102644886853973'),   # ⭐
-        ],
-        [
-            btn(get_text('referral', lang), 'referral',
-                style=BTN_SUCCESS, icon_custom_emoji_id='6071278787947925866'),   # 🤝
-            btn(get_text('support', lang), 'support',
-                style=BTN_PRIMARY, icon_custom_emoji_id='5352759161945867747'),   # 💬
-        ],
-        [
-            btn(get_text('help', lang), 'help',
-                style=BTN_PRIMARY, icon_custom_emoji_id='5197269100878907942'),   # ❓
-            btn(get_text('language', lang), 'language',
-                style=BTN_PRIMARY, icon_custom_emoji_id='5397575638146110953'),   # 🌍
-        ],
-        [
-            btn(get_text('raffle', lang), 'raffle',
-                style=BTN_PRIMARY, icon_custom_emoji_id='6071123877067494706'),   # 🎲
-            btn(get_text('donate', lang), 'donate',
-                style=BTN_SUCCESS, icon_custom_emoji_id='5267102644886853973'),   # ⭐
-        ],
+        [InlineKeyboardButton(get_text('daily_bonus', lang), callback_data='daily_bonus'),
+         InlineKeyboardButton(get_text('orders', lang), callback_data='orders')],
+        [InlineKeyboardButton(get_text('transfer', lang), callback_data='transfer'),
+         InlineKeyboardButton(get_text('coupon', lang), callback_data='coupon')],
+        [InlineKeyboardButton(get_text('referral', lang), callback_data='referral'),
+         InlineKeyboardButton(get_text('support', lang), callback_data='support')],
+        [InlineKeyboardButton(get_text('help', lang), callback_data='help'),
+         InlineKeyboardButton(get_text('language', lang), callback_data='language')],
+        [InlineKeyboardButton(get_text('raffle', lang), callback_data='raffle'),
+         InlineKeyboardButton(get_text('donate', lang), callback_data='donate')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def back_to_menu_markup(lang):
-    return InlineKeyboardMarkup([[
-        btn(get_text('back_to_menu', lang), 'main_menu',
-            style=BTN_PRIMARY)
-    ]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]])
 
 def is_valid_url(url):
     pattern = re.compile(
@@ -925,10 +877,7 @@ async def send_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         f"<b>{a}</b> + <b>{b}</b> = ?\n\n"
         "➕ Doğru cevabı seçin: ➕"
     )
-    btns = [
-        btn(str(opt), f'captcha_{opt}', style=BTN_PRIMARY)
-        for opt in options
-    ]
+    btns = [InlineKeyboardButton(str(opt), callback_data=f'captcha_{opt}') for opt in options]
     rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
     keyboard = InlineKeyboardMarkup(rows)
 
@@ -1062,9 +1011,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            orders=order_count,
                            reg_date=user['registration_date'])
             keyboard = InlineKeyboardMarkup([
-                [btn(get_text('daily_bonus', lang), 'daily_bonus',
-                     style=BTN_SUCCESS, icon_custom_emoji_id='5267102644886853973')],
-                [btn(get_text('back_to_menu', lang), 'main_menu', style=BTN_PRIMARY)],
+                [InlineKeyboardButton(get_text('daily_bonus', lang), callback_data='daily_bonus')],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
             ])
             await safe_edit(query, text, keyboard)
 
@@ -1119,11 +1067,9 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ===== LANGUAGE =====
         elif data == 'language':
             keyboard = InlineKeyboardMarkup([
-                [
-                    btn('🇹🇷 Türkçe', 'lang_tr', style=BTN_PRIMARY),
-                    btn('🇬🇧 English', 'lang_en', style=BTN_PRIMARY),
-                ],
-                [btn(get_text('back_to_menu', lang), 'main_menu', style=BTN_PRIMARY)],
+                [InlineKeyboardButton('🇹🇷 Türkçe', callback_data='lang_tr'),
+                 InlineKeyboardButton('🇬🇧 English', callback_data='lang_en')],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
             ])
             await safe_edit(query, get_text('lang_select', lang), keyboard)
 
@@ -1143,43 +1089,30 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ===== SHOP =====
         elif data == 'shop':
             keyboard = InlineKeyboardMarkup([
-                [
-                    btn(get_text('tiktok_smm', lang), 'shop_tiktok',
-                        style=BTN_PRIMARY, icon_custom_emoji_id='5359640777590841912'),   # TikTok
-                    btn(get_text('telegram_smm', lang), 'shop_telegram',
-                        style=BTN_PRIMARY, icon_custom_emoji_id='5345965137863928359'),   # Telegram
-                ],
-                [btn(get_text('back_to_menu', lang), 'main_menu', style=BTN_PRIMARY)],
+                [InlineKeyboardButton(get_text('tiktok_smm', lang), callback_data='shop_tiktok'),
+                 InlineKeyboardButton(get_text('telegram_smm', lang), callback_data='shop_telegram')],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
             ])
             await safe_edit(query, get_text('shop_welcome', lang), keyboard)
 
         elif data in ('shop_tiktok', 'shop_telegram'):
             category = 'TikTok' if data == 'shop_tiktok' else 'Telegram'
             products = get_products_by_category(category, vip_only=False)
-            # category icon
-            cat_icon_id = '5359640777590841912' if category == 'TikTok' else '5345965137863928359'
 
             if not products:
                 cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
                 text = get_text('category_empty', lang, category=cat_label)
-                keyboard = InlineKeyboardMarkup([[
-                    btn(get_text('back_to_menu', lang), 'shop', style=BTN_PRIMARY)
-                ]])
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop')]])
                 await safe_edit(query, text, keyboard)
             else:
                 cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
-                text = f"🛍 <b>{cat_label}</b>\n\nBir ürün seçin:\n"
+                text = f"🛍️ <b>{cat_label}</b>\n\nBir ürün seçin:\n"
                 rows = []
                 for p in products:
                     stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
                     text += f"\n<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n"
-                    rows.append([btn(
-                        f"🛒 {p['name']}",
-                        f"buy_{p['product_id']}",
-                        style=BTN_SUCCESS,
-                        icon_custom_emoji_id='5312361253610475399'  # 🛒
-                    )])
-                rows.append([btn(get_text('back_to_menu', lang), 'shop', style=BTN_PRIMARY)])
+                    rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
+                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
         # ===== VIP SHOP =====
@@ -1199,13 +1132,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for p in products:
                     stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
                     text += f"<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n\n"
-                    rows.append([btn(
-                        f"🛒 {p['name']}",
-                        f"buy_{p['product_id']}",
-                        style=BTN_SUCCESS,
-                        icon_custom_emoji_id='5312361253610475399'  # 🛒
-                    )])
-                rows.append([btn(get_text('back_to_menu', lang), 'main_menu', style=BTN_PRIMARY)])
+                    rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
+                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
         # ===== VIP PURCHASE =====
@@ -1264,10 +1192,10 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     emoji = order_status_emoji(order['status'])
                     text += (
                         f"{emoji} <b>#{order['order_id']}</b> — {order['status']}\n"
-                        f"🛍 <b>{order['product_name']}</b>\n"
+                        f"🛍️ <b>{order['product_name']}</b>\n"
                         f"💵 {order['product_price']} Puan\n"
                         f"🔗 {order.get('profile_link', '-')}\n"
-                        f"📆 {order.get('order_date', '-')}\n\n"
+                        f"📅 {order.get('order_date', '-')}\n\n"
                     )
                 await safe_edit(query, text, back_markup)
 
@@ -1292,19 +1220,22 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ===== DONATE =====
         elif data == 'donate':
-            star_amounts = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 75, 100]
-            rows = []
-            pair = []
-            for s in star_amounts:
-                pair.append(btn(f'⭐ {s}', f'donate_{s}', style=BTN_SUCCESS,
-                                icon_custom_emoji_id='5267102644886853973'))
-                if len(pair) == 2:
-                    rows.append(pair)
-                    pair = []
-            if pair:
-                rows.append(pair)
-            rows.append([btn(get_text('back_to_menu', lang), 'main_menu', style=BTN_PRIMARY)])
-            await safe_edit(query, get_text('donate_text', lang), InlineKeyboardMarkup(rows))
+            buttons = [
+                [InlineKeyboardButton('⭐️ 5', callback_data='donate_5'),
+                 InlineKeyboardButton('⭐️ 10', callback_data='donate_10')],
+                [InlineKeyboardButton('⭐️ 15', callback_data='donate_15'),
+                 InlineKeyboardButton('⭐️ 20', callback_data='donate_20')],
+                [InlineKeyboardButton('⭐️ 25', callback_data='donate_25'),
+                 InlineKeyboardButton('⭐️ 30', callback_data='donate_30')],
+                [InlineKeyboardButton('⭐️ 35', callback_data='donate_35'),
+                 InlineKeyboardButton('⭐️ 40', callback_data='donate_40')],
+                [InlineKeyboardButton('⭐️ 45', callback_data='donate_45'),
+                 InlineKeyboardButton('⭐️ 50', callback_data='donate_50')],
+                [InlineKeyboardButton('⭐️ 75', callback_data='donate_75'),
+                 InlineKeyboardButton('⭐️ 100', callback_data='donate_100')],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
+            ]
+            await safe_edit(query, get_text('donate_text', lang), InlineKeyboardMarkup(buttons))
 
         elif data.startswith('donate_') and not data.startswith('donate_invoice'):
             stars = int(data.split('_')[1])
@@ -1381,15 +1312,13 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             keyboard = InlineKeyboardMarkup([
                 [
-                    btn('✅ Evet', f'buy_confirm_{product_id}',
-                        style=BTN_SUCCESS),
-                    btn('❌ Hayır', back_cb,
-                        style=BTN_DANGER),
+                    InlineKeyboardButton('✅ Evet', callback_data=f'buy_confirm_{product_id}'),
+                    InlineKeyboardButton('❌ Hayır', callback_data=back_cb)
                 ]
             ])
             await safe_edit(query, text, keyboard)
 
-        # ===== BUY CONFIRM =====
+        # ===== BUY CONFIRM — Bakiye Yoxla, Link İstə =====
         elif data.startswith('buy_confirm_'):
             product_id = int(data.split('_')[2])
             conn = get_conn()
@@ -1423,13 +1352,13 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             text = (
                 f"🔗 <b>Sipariş Etmek İstediğiniz Bağlantıyı Girin</b>\n\n"
-                f"🛍 Ürün: <b>{product['name']}</b>\n"
+                f"🛍️ Ürün: <b>{product['name']}</b>\n"
                 f"💵 Fiyat: <b>{product['price']} Puan</b>\n\n"
                 f"Lütfen geçerli bir URL girin (https:// ile başlamalı).\n"
                 f"İptal için /iptal yazın."
             )
             await safe_edit(query, text, InlineKeyboardMarkup([
-                [btn('❌ İptal', 'main_menu', style=BTN_DANGER)]
+                [InlineKeyboardButton('❌ İptal', callback_data='main_menu')]
             ]))
 
         # ===== ADMIN: Siparişi Onayla =====
@@ -1502,13 +1431,13 @@ async def _admin_approve_order(query, context, order_id, lang):
         f"✅ <b>Sipariş Onaylandı</b>\n\n"
         f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
         f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
-        f"🛍 <b>Ürün:</b> {order['product_name']}\n"
+        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
         f"💵 <b>Fiyat:</b> {order['product_price']} Puan\n"
         f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
-        f"📆 <b>Tarih:</b> {order['order_date']}"
+        f"📅 <b>Tarih:</b> {order['order_date']}"
     )
     complete_markup = InlineKeyboardMarkup([
-        [btn('🏁 Siparişi Tamamla', f'admin_complete_{order_id}', style=BTN_SUCCESS)]
+        [InlineKeyboardButton('🏁 Siparişi Tamamla', callback_data=f'admin_complete_{order_id}')]
     ])
     try:
         plain_text, entities = render_with_premium_emoji(log_text)
@@ -1531,7 +1460,7 @@ async def _admin_approve_order(query, context, order_id, lang):
             order['user_id'],
             f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍 <b>Ürün:</b> {order['product_name']}\n"
+            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
             f"⏳ Siparişiniz işleme alındı, yakında tamamlanacak."
         )
@@ -1574,10 +1503,10 @@ async def _admin_reject_order(query, context, order_id, lang):
         f"🔴 <b>Sipariş Reddedildi</b>\n\n"
         f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
         f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
-        f"🛍 <b>Ürün:</b> {order['product_name']}\n"
+        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
         f"💵 <b>Fiyat:</b> {order['product_price']} Puan (iade edildi)\n"
         f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
-        f"📆 <b>Tarih:</b> {order['order_date']}"
+        f"📅 <b>Tarih:</b> {order['order_date']}"
     )
     try:
         plain_text, entities = render_with_premium_emoji(log_text)
@@ -1599,7 +1528,7 @@ async def _admin_reject_order(query, context, order_id, lang):
             order['user_id'],
             f"🔴 <b>Siparişiniz Reddedildi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍 <b>Ürün:</b> {order['product_name']}\n"
+            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
             f"💵 <b>{order['product_price']} Puan</b> hesabınıza iade edildi."
         )
     except Exception as e:
@@ -1639,10 +1568,10 @@ async def _admin_complete_order(query, context, order_id, lang):
         f"🟢 <b>Sipariş Tamamlandı</b>\n\n"
         f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
         f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
-        f"🛍 <b>Ürün:</b> {order['product_name']}\n"
+        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
         f"💵 <b>Fiyat:</b> {order['product_price']} Puan\n"
         f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
-        f"📆 <b>Tarih:</b> {order['order_date']}"
+        f"📅 <b>Tarih:</b> {order['order_date']}"
     )
     try:
         plain_text, entities = render_with_premium_emoji(log_text)
@@ -1664,7 +1593,7 @@ async def _admin_complete_order(query, context, order_id, lang):
             order['user_id'],
             f"🟢 <b>Siparişiniz Tamamlandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍 <b>Ürün:</b> {order['product_name']}\n"
+            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
             f"✅ Siparişiniz başarıyla teslim edilmiştir. İyi kullanımlar!"
         )
@@ -1678,7 +1607,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     lang = get_user_language(user)
 
-    # ===== PROFİL LİNK BEKLEME (Sipariş axışı) =====
+    # ===== PROFİL LİNK BEKLEME (Sipariş akışı) =====
     if context.user_data.get('awaiting_profile_link'):
         if text == '/iptal':
             context.user_data['awaiting_profile_link'] = False
@@ -1760,7 +1689,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message,
             f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
-            f"🛍 <b>Ürün:</b> {product['name']}\n"
+            f"🛍️ <b>Ürün:</b> {product['name']}\n"
             f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
             f"🔗 <b>Bağlantı:</b> {profile_link}\n"
             f"💎 <b>Yeni Bakiye:</b> {new_balance} Puan\n\n"
@@ -1771,15 +1700,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🛒 <b>Sipariş Geldi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"👤 <b>Kullanıcı ID:</b> {user_id}\n"
-            f"🛍 <b>Ürün:</b> {product['name']}\n"
+            f"🛍️ <b>Ürün:</b> {product['name']}\n"
             f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
             f"🔗 <b>Bağlantı:</b> {profile_link}\n"
-            f"📆 <b>Tarih:</b> {order_date}"
+            f"📅 <b>Tarih:</b> {order_date}"
         )
         log_markup = InlineKeyboardMarkup([
             [
-                btn('✅ Onayla', f'admin_approve_{order_id}', style=BTN_SUCCESS),
-                btn('❌ Reddet', f'admin_reject_{order_id}', style=BTN_DANGER),
+                InlineKeyboardButton('✅ Onayla', callback_data=f'admin_approve_{order_id}'),
+                InlineKeyboardButton('❌ Reddet', callback_data=f'admin_reject_{order_id}')
             ]
         ])
         try:
@@ -1875,14 +1804,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_msg = get_text('transfer_success', lang, amount=amount, receiver_id=receiver_id, new_balance=new_balance)
             await reply_rich(update.message, success_msg)
 
-            log_msg = (
-                f"💰 YENİ TRANSFER\n\n"
-                f"👤 Gönderen: {user_id}\n"
-                f"👤 Alan: {receiver_id}\n"
-                f"💎 Miktar: {amount}\n"
-                f"💰 Komisyon: 1\n"
-                f"📆 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            )
+            log_msg = f"💸 YENİ TRANSFER\n\n👤 Gönderen: {user_id}\n👤 Alan: {receiver_id}\n💎 Miktar: {amount}\n💰 Komisyon: 1\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             try:
                 await send_rich(context.bot, LOG_CHANNEL, log_msg)
             except Exception as e:
@@ -1907,12 +1829,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         context.user_data['awaiting_support'] = False
-        support_log = (
-            f"💬 YENİ DESTEK MESAJI\n\n"
-            f"👤 Kullanıcı: {user_id}\n"
-            f"💬 Mesaj:\n{text}\n\n"
-            f"📆 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        )
+        support_log = f"💬 YENİ DESTEK MESAJI\n\n👤 Kullanıcı: {user_id}\n💬 Mesaj:\n{text}\n\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         try:
             await send_rich(context.bot, LOG_CHANNEL, support_log)
         except Exception as e:
@@ -1950,10 +1867,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = c.fetchone()[0]
             conn.commit()
             vip_tag = '👑 VIP' if vip_only else ''
-            await update.message.reply_text(
-                f'✅ Ürün eklendi!\n\nID: {product_id}\n📝 Ad: {name}\n'
-                f'📂 Kategori: {category}\n💰 Fiyat: {price}\n📦 Stok: {stock} {vip_tag}'
-            )
+            await update.message.reply_text(f'✅ Ürün eklendi!\n\nID: {product_id}\n📝 Ad: {name}\n📂 Kategori: {category}\n💰 Fiyat: {price}\n📦 Stok: {stock} {vip_tag}')
         except Exception as e:
             logger.error(f"add_product error: {e}")
             conn.rollback()
@@ -1981,9 +1895,7 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product = c.fetchone()
             conn.commit()
             if product:
-                await update.message.reply_text(
-                    f'✅ Stok güncellendi!\n\n📝 Ürün: {product["name"]}\n📦 Yeni Stok: {new_stock}'
-                )
+                await update.message.reply_text(f'✅ Stok güncellendi!\n\n📝 Ürün: {product["name"]}\n📦 Yeni Stok: {new_stock}')
             else:
                 await update.message.reply_text('❌ Ürün bulunamadı!')
         except Exception as e:
@@ -2035,9 +1947,7 @@ async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         update_balance(target_user_id, points)
         user_after = get_user(target_user_id)
-        await update.message.reply_text(
-            f'✅ {points} puan verildi!\n\n👤 ID: {target_user_id}\n💎 Yeni Bakiye: {user_after["balance"]}'
-        )
+        await update.message.reply_text(f'✅ {points} puan verildi!\n\n👤 ID: {target_user_id}\n💎 Yeni Bakiye: {user_after["balance"]}')
     except Exception as e:
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
@@ -2056,9 +1966,7 @@ async def admin_set_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c = conn.cursor()
             c.execute('UPDATE users SET vip_status = %s WHERE user_id = %s', (status, target_user_id))
             conn.commit()
-            await update.message.reply_text(
-                f'✅ Kullanıcı {target_user_id} VIP durumu: {"AÇIK" if status else "KAPALI"}'
-            )
+            await update.message.reply_text(f'✅ Kullanıcı {target_user_id} VIP durumu: {"AÇIK" if status else "KAPALI"}')
         except Exception as e:
             logger.error(f"admin_set_vip error: {e}")
             conn.rollback()
@@ -2094,8 +2002,8 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'📦 <b>Toplam Sipariş:</b> {total_orders}\n'
             f'⏳ <b>Bekleyen Sipariş:</b> {pending_orders}\n'
             f'💎 <b>Toplam Bakiye:</b> {total_balance}\n'
-            f'🛍 <b>Toplam Ürün:</b> {total_products}\n'
-            f'📆 <b>Tarih:</b> {datetime.now().strftime("%Y-%m-%d %H:%M")}'
+            f'🛍️ <b>Toplam Ürün:</b> {total_products}\n'
+            f'📅 <b>Tarih:</b> {datetime.now().strftime("%Y-%m-%d %H:%M")}'
         )
         await reply_rich(update.message, text)
     except Exception as e:
@@ -2136,6 +2044,7 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 {o['user_id']} | 🔗 {o['profile_link']}\n\n"
         )
     await reply_rich(update.message, text)
+
 
 async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -2227,6 +2136,7 @@ async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += f'\n🔸 <b>Ana Admin:</b> {ADMIN_ID}'
     await reply_rich(update.message, text)
 
+
 # ===== MAIN =====
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -2254,4 +2164,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
