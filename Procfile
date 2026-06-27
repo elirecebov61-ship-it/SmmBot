@@ -1,1 +1,1 @@
-worker: python eren_smm_bot_full.py
+worker: python eren_smm_postgresql.py
