@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
@@ -26,8 +27,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===== DATABASE CONNECTION POOL =====
-# Hər kliklə yeni TCP bağlantısı açmaq gecikməyə səbəb olur.
-# Pool ilə bağlantılar yenidən istifadə olunur -> butonlar daha tez cavab verir.
 db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, DATABASE_URL)
 
 def get_conn():
@@ -37,7 +36,6 @@ def put_conn(conn):
     db_pool.putconn(conn)
 
 def init_db():
-    """Database cədvəllərini yaratmaq"""
     conn = get_conn()
     try:
         c = conn.cursor()
@@ -71,9 +69,10 @@ def init_db():
             user_id BIGINT NOT NULL REFERENCES users(user_id),
             product_id INTEGER NOT NULL REFERENCES products(product_id),
             quantity INTEGER NOT NULL,
-            status TEXT DEFAULT 'Alındı',
+            status TEXT DEFAULT 'Beklemede',
             order_date TEXT,
-            profile_link TEXT
+            profile_link TEXT,
+            log_message_id BIGINT
         )''')
 
         c.execute('''CREATE TABLE IF NOT EXISTS transfers (
@@ -92,24 +91,52 @@ def init_db():
             referral_date TEXT
         )''')
 
+        # log_message_id sütunu yoxdursa əlavə et (köhnə DB-lər üçün)
+        try:
+            c.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS log_message_id BIGINT")
+        except Exception:
+            pass
+
         c.execute('CREATE INDEX IF NOT EXISTS idx_users_id ON users(user_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_transfers_sender ON transfers(sender_id)')
 
         conn.commit()
         c.close()
+
+        # Default məhsulları əlavə et (yoxdursa)
+        _seed_products(conn)
+
         logger.info("Database başlatıldı")
     finally:
         put_conn(conn)
+
+def _seed_products(conn):
+    """TikTok 10k İzlenme və Telegram 1k Abone məhsullarını əlavə et (yalnız boşdursa)"""
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute("SELECT COUNT(*) as cnt FROM products")
+        count = c.fetchone()['cnt']
+        if count == 0:
+            c.execute(
+                "INSERT INTO products (name, category, price, stock, vip_only) VALUES (%s, %s, %s, %s, %s)",
+                ('TikTok 10k İzlenme', 'TikTok', 10, 999999, False)
+            )
+            c.execute(
+                "INSERT INTO products (name, category, price, stock, vip_only) VALUES (%s, %s, %s, %s, %s)",
+                ('Telegram 1k Abone (Garantili)', 'Telegram', 10, 999999, False)
+            )
+            conn.commit()
+            logger.info("Default məhsullar əlavə edildi")
+    except Exception as e:
+        logger.error(f"_seed_products error: {e}")
 
 try:
     init_db()
 except Exception as e:
     logger.error(f"Database başlatma hatası: {e}")
 
-# ===== LANGUAGE (HTML format ilə) =====
-# <b>bold</b>, <i>italic</i> taglarından istifadə edilir.
-# Bütün mesajlar parse_mode=HTML ilə göndərilir.
+# ===== LANGUAGE =====
 LANG = {
     'TR': {
         'welcome': '☀️ Merhaba\n\n👾 <b>Eren SMM TR</b>\nTürkiye\'nin güvenilir dijital ürün marketi.\n\nİşlem seçin:',
@@ -260,33 +287,21 @@ LANG = {
             'Satın aldığınız her ürün için otomatik bir Sipariş ID oluşturulur.\n'
             'Sipariş verdikten sonra bot sizden profil linkinizi isteyecektir.\n\n'
             'Sipariş durumları:\n'
-            '🟡 Alındı — Sisteme kaydedildi\n'
-            '🔵 İşlemde — Hazırlanıyor\n'
-            '🟢 Teslim Edildi — Size iletildi\n'
-            '🟥 İptal — Puan iade edildi\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '📦 Sipariş İptali ⁉️\n'
-            'Siparişlerim menüsünden ilgili siparişe tıklayın. Teslim edilmemiş siparişlerde İptal Et butonu görünür. İptal ücreti 1 Puan\'dır, kalan iade edilir.\n\n'
+            '🟡 Beklemede — Onay bekleniyor\n'
+            '🟢 Tamamlandı — Teslim edildi\n'
+            '🔴 Reddedildi — İptal edildi\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '🎫 Promosyon Kodu Nedir? ⁉️\n'
-            'Yönetici tarafından oluşturulan özel kodlardır. Ana menüden Kupon Kodu butonuna basarak kodunuzu girin ve puan kazanın. Her kod sadece belirtilen kişi sayısınca kullanılabilir.\n\n'
+            'Yönetici tarafından oluşturulan özel kodlardır.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '🤝 Davet Et Kazan Nedir ⁉️\n'
             'Size özel davet linkinizi paylaşın. Her katılan kişi için otomatik +1 Puan kazanırsınız.\n'
             '20 kişiyi davet ederek VIP üye olabilirsiniz.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '💰 Puan Transfer ⁉️\n'
-            'Günde 2 transfer hakkınız vardır. Her transferde 1 Puan komisyon kesilir.\n'
-            'Grupta kullanım: Birine yanıt vererek /transfer 10 yazın.\n\n'
+            'Günde 2 transfer hakkınız vardır. Her transferde 1 Puan komisyon kesilir.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
-            '🎲 Çekiliş ve Haftalık Ödül ⁉️\n'
-            'Zaman zaman çekilişler düzenlenir, Çekiliş butonuyla katılabilirsiniz.\n'
-            'Her hafta en çok referans getiren 3 kişi özel ödül kazanır.\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '💸 Bakiye İadesi ve Destek ⁉️\n'
-            'Hatalı sipariş veya sorun yaşarsanız ana menüden Destek butonuna basarak yöneticiye talebinizi iletebilirsiniz.\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '⁉️ Destek İçin: <b>Admin</b> butonu üzerinden ulaşabilirsiniz ⁉️'
+            '⁉️ Destek İçin: <b>Destek</b> butonu üzerinden ulaşabilirsiniz ⁉️'
         ),
 
         'coupon_maintenance': '🔧 Kupon Sistemi Tamirde',
@@ -426,27 +441,12 @@ LANG = {
             '📖 <b>HELP CENTER</b> 📖\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '🛍 What is the Shop ⁉️\n'
-            'The bot\'s main sales area. You can buy products organized into categories here. Click a product to see price and stock, then tap buy to deduct points and create your order.\n\n'
+            'The bot\'s main sales area. You can buy products organized into categories here.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '👑 VIP Shop & Membership ⁉️\n'
-            'The VIP shop contains products exclusive to VIP members. You can become VIP by bringing 20 referrals.\n'
             'VIP benefits: 👑 VIP Shop access • 🎁 2x daily bonus • 🤝 +2 Points per referral\n\n'
             '━━━━━━━━━━━━━━━━━\n'
-            '💎 How to Earn Points ⁉️\n'
-            '• +1 Point when a friend joins via your link (VIP: +2 Points)\n'
-            '• Daily bonus every day: +1 Point (VIP: 2 times a day)\n'
-            '• Manual point top-up by the admin\n'
-            '• Using a promo code\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '📦 How Order Tracking Works ⁉️\n'
-            'An automatic Order ID is created for every product you purchase.\n\n'
-            'Order statuses:\n'
-            '🟡 Received — Recorded in the system\n'
-            '🔵 Processing — Being prepared\n'
-            '🟢 Delivered — Sent to you\n'
-            '🟥 Cancelled — Points refunded\n\n'
-            '━━━━━━━━━━━━━━━━━\n'
-            '⁉️ For Support: Use the <b>Admin</b> button ⁉️'
+            '⁉️ For Support: Use the <b>Support</b> button ⁉️'
         ),
 
         'coupon_maintenance': '🔧 Coupon System Under Maintenance',
@@ -494,7 +494,6 @@ def update_balance(user_id, amount):
         put_conn(conn)
 
 def get_user_language(user_id_or_user):
-    """user_id və ya artıq alınmış user dict qəbul edə bilər (əlavə DB sorğusundan qaçmaq üçün)"""
     try:
         if isinstance(user_id_or_user, dict):
             user = user_id_or_user
@@ -505,7 +504,6 @@ def get_user_language(user_id_or_user):
         return 'TR'
 
 def get_text(key, lang_or_user_id, **kwargs):
-    """İkinci parametr ya birbaşa dil kodu ('TR'/'EN'), ya da user_id ola bilər (geriyə uyğunluq üçün)"""
     if lang_or_user_id in ('TR', 'EN'):
         lang = lang_or_user_id
     else:
@@ -554,8 +552,16 @@ def get_all_vip_products():
     finally:
         put_conn(conn)
 
+def order_status_emoji(status):
+    if status == 'Beklemede':
+        return '🟡'
+    elif status == 'Tamamlandı':
+        return '🟢'
+    elif status == 'Reddedildi':
+        return '🔴'
+    return '⚪'
+
 def main_menu_keyboard(user):
-    """user: dict (artıq DB-dən alınmış). 4 buton 2x2, sonra uzun VIP/Zaten-VIP, sonra qalanı 2x2."""
     lang = get_user_language(user)
     is_vip = bool(user and user.get('vip_status'))
 
@@ -589,6 +595,17 @@ def main_menu_keyboard(user):
 def back_to_menu_markup(lang):
     return InlineKeyboardMarkup([[InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]])
 
+def is_valid_url(url):
+    """Sadə URL yoxlama"""
+    pattern = re.compile(
+        r'^https?://'
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
+        r'localhost|'
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+        r'(?::\d+)?'
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    return bool(pattern.match(url))
+
 # ===== MAIN HANDLERS =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
@@ -603,7 +620,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         create_user(user_id, tg_user.username or f"User{user_id}")
         existing_user = get_user(user_id)
 
-    # Referral sistem (yalnız /start mesajla gəldikdə işləsin)
     if update.message and context.args:
         try:
             referrer_id = int(context.args[0])
@@ -624,8 +640,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             c.execute('UPDATE users SET referrals = referrals + 1, balance = balance + %s WHERE user_id = %s',
                                      (bonus, referrer_id))
                             conn.commit()
-
-                            # Referans verən şəxsə xəbər ver
                             try:
                                 ref_lang = get_user_language(referrer)
                                 notify = ('🤝 Yeni bir kişi linkinizle katıldı!\n➕ +{} Puan kazandınız!' if ref_lang == 'TR'
@@ -656,8 +670,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answered = False
 
     async def answer_once(alert_text=None, show_alert=False):
-        """Telegram bir callback query-ye yalnizca BIR defe cevap vermeye izin verir.
-        Ikinci cagiri sessizce yutulup hicbir sey gostermez. Bu fonksiyon bunu onler."""
         nonlocal answered
         if answered:
             return
@@ -678,17 +690,15 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_user_language(user)
     back_markup = back_to_menu_markup(lang)
 
-    # Alert gosterecek callback'ler disinda hemen spinner'i durdur (hiz icin).
-    # Alert gosterilecek callback'lerde answer_once alert ile cagrilacak,
-    # bu yuzden burada bos cevap GONDERMIYORUZ - tek cevap hakkimizi alert icin saklıyoruz.
     data_preview = query.data or ''
-    will_show_alert = (data_preview in ('daily_bonus', 'vip_shop')) or data_preview.startswith('buy_')
+    will_show_alert = (data_preview in ('daily_bonus', 'vip_shop')) or data_preview.startswith('buy_confirm_')
     if not will_show_alert:
         await answer_once()
 
     try:
         data = query.data
 
+        # ===== BALANCE / PROFILE =====
         if data in ('balance', 'profile'):
             conn = get_conn()
             try:
@@ -713,14 +723,12 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await safe_edit(query, text, keyboard)
 
+        # ===== DAILY BONUS =====
         elif data == 'daily_bonus':
             is_vip = bool(user['vip_status'])
             today = datetime.now().strftime('%Y-%m-%d')
             max_per_day = 2 if is_vip else 1
 
-            # daily_transfer_count'u transfer için kullandığımızdan,
-            # bonus sayacı için last_bonus_date + ayrı bir sayaç gerekiyor.
-            # Burada last_bonus_date alanını "YYYY-MM-DD" veya "YYYY-MM-DD:count" formatında saklıyoruz.
             raw = user['last_bonus_date'] or ''
             if ':' in raw:
                 last_day, used_str = raw.split(':', 1)
@@ -758,10 +766,12 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = get_text('daily_bonus_success', lang, balance=new_balance)
             await safe_edit(query, text, back_markup)
 
+        # ===== REFERRAL =====
         elif data == 'referral':
             text = get_text('referral_link', lang, user_id=user_id, bot_username=BOT_USERNAME)
             await safe_edit(query, text, back_markup)
 
+        # ===== LANGUAGE =====
         elif data == 'language':
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton('🇹🇷 Türkçe', callback_data='lang_tr'),
@@ -783,6 +793,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 put_conn(conn)
             await start(update, context)
 
+        # ===== SHOP =====
         elif data == 'shop':
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton(get_text('tiktok_smm', lang), callback_data='shop_tiktok'),
@@ -801,14 +812,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop')]])
                 await safe_edit(query, text, keyboard)
             else:
-                text = f"📦 <b>{category} SMM</b>\n\n"
+                cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
+                text = f"🛍️ <b>{cat_label}</b>\n\nBir ürün seçin:\n"
                 rows = []
                 for p in products:
-                    text += f"• {p['name']} — 💰{p['price']} Puan (📦{p['stock']} stok)\n"
-                    rows.append([InlineKeyboardButton(f"{p['name']} ({p['price']}P)", callback_data=f"buy_{p['product_id']}")])
+                    stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
+                    text += f"\n<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n"
+                    rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
                 rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
+        # ===== VIP SHOP =====
         elif data == 'vip_shop':
             if not user['vip_status']:
                 await answer_once(get_text('vip_required_alert', lang), show_alert=True)
@@ -823,11 +837,13 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = get_text('vip_shop_welcome', lang) + "\n\n"
                 rows = []
                 for p in products:
-                    text += f"• {p['name']} — 💰{p['price']} Puan (📦{p['stock']} stok)\n"
-                    rows.append([InlineKeyboardButton(f"{p['name']} ({p['price']}P)", callback_data=f"buy_{p['product_id']}")])
+                    stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
+                    text += f"<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n\n"
+                    rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
                 rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
+        # ===== VIP PURCHASE =====
         elif data == 'vip_purchase':
             if user['vip_status']:
                 await safe_edit(query, get_text('vip_already', lang), back_markup)
@@ -838,7 +854,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             missing = max(0, required - current)
 
             if missing == 0:
-                # Referans yetərlidir -> VIP-i avtomatik təyin et
                 conn = get_conn()
                 try:
                     c = conn.cursor()
@@ -856,11 +871,18 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'vip_already_info':
             await safe_edit(query, get_text('vip_already', lang), back_markup)
 
+        # ===== ORDERS =====
         elif data == 'orders':
             conn = get_conn()
             try:
                 c = conn.cursor(cursor_factory=RealDictCursor)
-                c.execute('SELECT * FROM orders WHERE user_id = %s ORDER BY order_id DESC', (user_id,))
+                c.execute('''
+                    SELECT o.*, p.name as product_name, p.price as product_price
+                    FROM orders o
+                    JOIN products p ON o.product_id = p.product_id
+                    WHERE o.user_id = %s
+                    ORDER BY o.order_id DESC
+                ''', (user_id,))
                 orders = c.fetchall()
             except Exception as e:
                 logger.error(f"orders fetch error: {e}")
@@ -869,15 +891,22 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 put_conn(conn)
 
             if not orders:
-                text = get_text('no_orders', lang)
+                await safe_edit(query, get_text('no_orders', lang), back_markup)
             else:
-                title = 'Siparişleriniz' if lang == 'TR' else 'Your Orders'
-                text = f"📦 <b>{title}</b> ({len(orders)}):\n\n"
+                title = '📦 <b>Siparişleriniz</b>' if lang == 'TR' else '📦 <b>Your Orders</b>'
+                text = f"{title} ({len(orders)}):\n\n"
                 for order in orders:
-                    text += f"ID: {order['order_id']} | Status: {order['status']}\n"
+                    emoji = order_status_emoji(order['status'])
+                    text += (
+                        f"{emoji} <b>#{order['order_id']}</b> — {order['status']}\n"
+                        f"🛍️ <b>{order['product_name']}</b>\n"
+                        f"💵 {order['product_price']} Puan\n"
+                        f"🔗 {order.get('profile_link', '-')}\n"
+                        f"📅 {order.get('order_date', '-')}\n\n"
+                    )
+                await safe_edit(query, text, back_markup)
 
-            await safe_edit(query, text, back_markup)
-
+        # ===== TRANSFER =====
         elif data == 'transfer':
             daily_left = 2
             today = datetime.now().strftime('%Y-%m-%d')
@@ -892,9 +921,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(query, text, back_markup)
             context.user_data['awaiting_transfer'] = True
 
+        # ===== RAFFLE =====
         elif data == 'raffle':
             await safe_edit(query, get_text('no_active_raffle', lang), back_markup)
 
+        # ===== DONATE =====
         elif data == 'donate':
             buttons = [
                 [InlineKeyboardButton('⭐️ 5', callback_data='donate_5'),
@@ -913,7 +944,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await safe_edit(query, get_text('donate_text', lang), InlineKeyboardMarkup(buttons))
 
-        elif data.startswith('donate_'):
+        elif data.startswith('donate_') and not data.startswith('donate_invoice'):
             stars = int(data.split('_')[1])
             try:
                 await context.bot.send_invoice(
@@ -931,23 +962,30 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"send_invoice error: {e}")
                 await safe_edit(query, get_text('generic_error', lang), back_markup)
 
+        # ===== COUPON =====
         elif data == 'coupon':
             await safe_edit(query, get_text('coupon_maintenance', lang), back_markup)
 
+        # ===== SUPPORT =====
         elif data == 'support':
             text = get_text('support_text', lang, balance=user['balance'])
             await safe_edit(query, text, back_markup)
             context.user_data['awaiting_support'] = True
 
+        # ===== HELP =====
         elif data == 'help':
             await safe_edit(query, get_text('help_text', lang), back_markup)
 
+        # ===== MAIN MENU =====
         elif data == 'main_menu':
             context.user_data['awaiting_transfer'] = False
             context.user_data['awaiting_support'] = False
+            context.user_data['awaiting_profile_link'] = False
+            context.user_data['pending_product_id'] = None
             await start(update, context)
 
-        elif data.startswith('buy_'):
+        # ===== BUY — Məhsul Detay Səhifəsi =====
+        elif data.startswith('buy_') and not data.startswith('buy_confirm_') and not data.startswith('buy_cancel_'):
             product_id = int(data.split('_')[1])
             conn = get_conn()
             try:
@@ -960,17 +998,102 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             finally:
                 put_conn(conn)
 
-            if not product or product['stock'] <= 0:
-                await answer_once('❌ Ürün bulunamadı veya stok yok!', show_alert=True)
+            if not product:
+                await answer_once('❌ Ürün bulunamadı!', show_alert=True)
                 return
 
+            stock_text = 'Sınırsız' if product['stock'] >= 999999 else str(product['stock'])
+
+            # Kategori bazlı geri dönüş butonu
+            if product['category'] == 'TikTok':
+                back_cb = 'shop_tiktok'
+            elif product['category'] == 'Telegram':
+                back_cb = 'shop_telegram'
+            else:
+                back_cb = 'shop'
+
+            text = (
+                f"<b>{product['name']}</b>\n\n"
+                f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
+                f"📦 <b>Stok:</b> {stock_text}\n\n"
+                f"⁉️ Satın almak istiyorsunuz ⁉️"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton('✅ Evet', callback_data=f'buy_confirm_{product_id}'),
+                    InlineKeyboardButton('❌ Hayır', callback_data=back_cb)
+                ]
+            ])
+            await safe_edit(query, text, keyboard)
+
+        # ===== BUY CONFIRM — Bakiye Yoxla, Link İstə =====
+        elif data.startswith('buy_confirm_'):
+            product_id = int(data.split('_')[2])
+            conn = get_conn()
+            try:
+                c = conn.cursor(cursor_factory=RealDictCursor)
+                c.execute('SELECT * FROM products WHERE product_id = %s', (product_id,))
+                product = c.fetchone()
+            except Exception as e:
+                logger.error(f"buy_confirm fetch error: {e}")
+                product = None
+            finally:
+                put_conn(conn)
+
+            if not product:
+                await answer_once('❌ Ürün bulunamadı!', show_alert=True)
+                return
+
+            # Bakiye kontrolü
             if user['balance'] < product['price']:
-                await answer_once(get_text('insufficient_balance', lang,
-                                             needed=product['price'],
-                                             balance=user['balance']), show_alert=True)
+                needed = product['price']
+                text = (
+                    f"👎 <b>Yetersiz Bakiye!</b>\n\n"
+                    f"💵 <b>{needed} Puana</b> ihtiyacınız var.\n"
+                    f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>"
+                )
+                await safe_edit(query, text, back_markup)
                 return
 
-            await answer_once('🛒 Sipariş akışı için bu adımı kendi iş mantığınıza göre genişletin (profil linki isteme vb).', show_alert=True)
+            # Bakiye yeterliyse link iste
+            await answer_once()
+            context.user_data['awaiting_profile_link'] = True
+            context.user_data['pending_product_id'] = product_id
+
+            text = (
+                f"🔗 <b>Sipariş Etmek İstediğiniz Bağlantıyı Girin</b>\n\n"
+                f"🛍️ Ürün: <b>{product['name']}</b>\n"
+                f"💵 Fiyat: <b>{product['price']} Puan</b>\n\n"
+                f"Lütfen geçerli bir URL girin (https:// ile başlamalı).\n"
+                f"İptal için /iptal yazın."
+            )
+            await safe_edit(query, text, InlineKeyboardMarkup([
+                [InlineKeyboardButton('❌ İptal', callback_data='main_menu')]
+            ]))
+
+        # ===== ADMIN: Siparişi Onayla =====
+        elif data.startswith('admin_approve_'):
+            if user_id != ADMIN_ID:
+                await answer_once('❌ Yetkiniz yok!', show_alert=True)
+                return
+            order_id = int(data.split('_')[2])
+            await _admin_approve_order(query, context, order_id, lang)
+
+        # ===== ADMIN: Siparişi Reddet =====
+        elif data.startswith('admin_reject_'):
+            if user_id != ADMIN_ID:
+                await answer_once('❌ Yetkiniz yok!', show_alert=True)
+                return
+            order_id = int(data.split('_')[2])
+            await _admin_reject_order(query, context, order_id, lang)
+
+        # ===== ADMIN: Siparişi Tamamla =====
+        elif data.startswith('admin_complete_'):
+            if user_id != ADMIN_ID:
+                await answer_once('❌ Yetkiniz yok!', show_alert=True)
+                return
+            order_id = int(data.split('_')[2])
+            await _admin_complete_order(query, context, order_id, lang)
 
         else:
             logger.warning(f"Bilinmeyen callback_data: {data}")
@@ -983,13 +1106,357 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+# ===== ADMIN ORDER ACTIONS =====
+async def _admin_approve_order(query, context, order_id, lang):
+    """Admin siparişi onaylar → log kanalında günceller, kullanıcıya bildirim + Tamamla butonu"""
+    conn = get_conn()
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('''
+            SELECT o.*, p.name as product_name, p.price as product_price
+            FROM orders o JOIN products p ON o.product_id = p.product_id
+            WHERE o.order_id = %s
+        ''', (order_id,))
+        order = c.fetchone()
+        if not order:
+            await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
+            return
+
+        if order['status'] != 'Beklemede':
+            await query.answer(f'⚠️ Sipariş zaten {order["status"]}!', show_alert=True)
+            return
+
+        c.execute("UPDATE orders SET status = 'Onaylandı' WHERE order_id = %s", (order_id,))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"_admin_approve_order error: {e}")
+        conn.rollback()
+        await query.answer('❌ Hata!', show_alert=True)
+        return
+    finally:
+        put_conn(conn)
+
+    await query.answer('✅ Sipariş onaylandı!', show_alert=True)
+
+    # Log kanalını güncelle
+    log_text = (
+        f"✅ <b>Sipariş Onaylandı</b>\n\n"
+        f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+        f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
+        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+        f"💵 <b>Fiyat:</b> {order['product_price']} Puan\n"
+        f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
+        f"📅 <b>Tarih:</b> {order['order_date']}"
+    )
+    complete_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton('🏁 Siparişi Tamamla', callback_data=f'admin_complete_{order_id}')]
+    ])
+    try:
+        if order.get('log_message_id'):
+            await context.bot.edit_message_text(
+                chat_id=LOG_CHANNEL,
+                message_id=order['log_message_id'],
+                text=log_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=complete_markup
+            )
+        else:
+            await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML, reply_markup=complete_markup)
+    except Exception as e:
+        logger.error(f"log channel update error: {e}")
+
+    # Kullanıcıya bildir
+    try:
+        await context.bot.send_message(
+            order['user_id'],
+            f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
+            f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+            f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
+            f"⏳ Siparişiniz işleme alındı, yakında tamamlanacak.",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"user notify error: {e}")
+
+async def _admin_reject_order(query, context, order_id, lang):
+    """Admin siparişi reddeder → puanı iade eder"""
+    conn = get_conn()
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('''
+            SELECT o.*, p.name as product_name, p.price as product_price
+            FROM orders o JOIN products p ON o.product_id = p.product_id
+            WHERE o.order_id = %s
+        ''', (order_id,))
+        order = c.fetchone()
+        if not order:
+            await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
+            return
+
+        if order['status'] not in ('Beklemede', 'Onaylandı'):
+            await query.answer(f'⚠️ Sipariş zaten {order["status"]}!', show_alert=True)
+            return
+
+        c.execute("UPDATE orders SET status = 'Reddedildi' WHERE order_id = %s", (order_id,))
+        c.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s",
+                  (order['product_price'], order['user_id']))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"_admin_reject_order error: {e}")
+        conn.rollback()
+        await query.answer('❌ Hata!', show_alert=True)
+        return
+    finally:
+        put_conn(conn)
+
+    await query.answer('🔴 Sipariş reddedildi, puan iade edildi.', show_alert=True)
+
+    log_text = (
+        f"🔴 <b>Sipariş Reddedildi</b>\n\n"
+        f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+        f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
+        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+        f"💵 <b>Fiyat:</b> {order['product_price']} Puan (iade edildi)\n"
+        f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
+        f"📅 <b>Tarih:</b> {order['order_date']}"
+    )
+    try:
+        if order.get('log_message_id'):
+            await context.bot.edit_message_text(
+                chat_id=LOG_CHANNEL,
+                message_id=order['log_message_id'],
+                text=log_text,
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"log channel update error: {e}")
+
+    try:
+        await context.bot.send_message(
+            order['user_id'],
+            f"🔴 <b>Siparişiniz Reddedildi</b>\n\n"
+            f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+            f"💵 <b>{order['product_price']} Puan</b> hesabınıza iade edildi.",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"user notify error: {e}")
+
+async def _admin_complete_order(query, context, order_id, lang):
+    """Admin siparişi tamamlar"""
+    conn = get_conn()
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('''
+            SELECT o.*, p.name as product_name, p.price as product_price
+            FROM orders o JOIN products p ON o.product_id = p.product_id
+            WHERE o.order_id = %s
+        ''', (order_id,))
+        order = c.fetchone()
+        if not order:
+            await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
+            return
+
+        if order['status'] == 'Tamamlandı':
+            await query.answer('✅ Sipariş zaten tamamlandı!', show_alert=True)
+            return
+
+        c.execute("UPDATE orders SET status = 'Tamamlandı' WHERE order_id = %s", (order_id,))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"_admin_complete_order error: {e}")
+        conn.rollback()
+        await query.answer('❌ Hata!', show_alert=True)
+        return
+    finally:
+        put_conn(conn)
+
+    await query.answer('🟢 Sipariş tamamlandı!', show_alert=True)
+
+    log_text = (
+        f"🟢 <b>Sipariş Tamamlandı</b>\n\n"
+        f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+        f"👤 <b>Kullanıcı ID:</b> {order['user_id']}\n"
+        f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+        f"💵 <b>Fiyat:</b> {order['product_price']} Puan\n"
+        f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n"
+        f"📅 <b>Tarih:</b> {order['order_date']}"
+    )
+    try:
+        if order.get('log_message_id'):
+            await context.bot.edit_message_text(
+                chat_id=LOG_CHANNEL,
+                message_id=order['log_message_id'],
+                text=log_text,
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await context.bot.send_message(LOG_CHANNEL, log_text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"log channel update error: {e}")
+
+    try:
+        await context.bot.send_message(
+            order['user_id'],
+            f"🟢 <b>Siparişiniz Tamamlandı!</b>\n\n"
+            f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+            f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
+            f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
+            f"✅ Siparişiniz başarıyla teslim edilmiştir. İyi kullanımlar!",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"user notify error: {e}")
+
+# ===== MESSAGE HANDLER =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
     user = get_user(user_id)
     lang = get_user_language(user)
 
-    if context.user_data.get('awaiting_transfer'):
+    # ===== PROFİL LİNK BEKLEME (Sipariş akışı) =====
+    if context.user_data.get('awaiting_profile_link'):
+        if text == '/iptal':
+            context.user_data['awaiting_profile_link'] = False
+            context.user_data['pending_product_id'] = None
+            await update.message.reply_text(
+                '❌ Sipariş iptal edildi.',
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        product_id = context.user_data.get('pending_product_id')
+        if not product_id:
+            context.user_data['awaiting_profile_link'] = False
+            return
+
+        # URL yoxlama
+        if not is_valid_url(text.strip()):
+            await update.message.reply_text(
+                '❌ <b>Yanlış Bağlantı!</b>\n\nGeçerli bir URL girin (https:// ile başlamalı).\nTekrar deneyin veya /iptal yazın.',
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        # Məhsulu yenidən al
+        conn = get_conn()
+        try:
+            c = conn.cursor(cursor_factory=RealDictCursor)
+            c.execute('SELECT * FROM products WHERE product_id = %s', (product_id,))
+            product = c.fetchone()
+        except Exception as e:
+            logger.error(f"profile_link product fetch error: {e}")
+            product = None
+        finally:
+            put_conn(conn)
+
+        if not product:
+            context.user_data['awaiting_profile_link'] = False
+            context.user_data['pending_product_id'] = None
+            await update.message.reply_text('❌ Ürün bulunamadı!', parse_mode=ParseMode.HTML)
+            return
+
+        # Bakiye yenidən yoxla
+        user = get_user(user_id)
+        if user['balance'] < product['price']:
+            context.user_data['awaiting_profile_link'] = False
+            context.user_data['pending_product_id'] = None
+            await update.message.reply_text(
+                f"👎 <b>Yetersiz Bakiye!</b>\n\n"
+                f"💵 <b>{product['price']} Puana</b> ihtiyacınız var.\n"
+                f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        profile_link = text.strip()
+        order_date = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        # Sipariş yarat, balansı düş
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO orders (user_id, product_id, quantity, status, order_date, profile_link)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING order_id
+            ''', (user_id, product_id, 1, 'Beklemede', order_date, profile_link))
+            order_id = c.fetchone()[0]
+            c.execute('UPDATE users SET balance = balance - %s WHERE user_id = %s',
+                      (product['price'], user_id))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"order create error: {e}")
+            conn.rollback()
+            put_conn(conn)
+            await update.message.reply_text(get_text('generic_error', lang), parse_mode=ParseMode.HTML)
+            return
+        finally:
+            put_conn(conn)
+
+        context.user_data['awaiting_profile_link'] = False
+        context.user_data['pending_product_id'] = None
+
+        new_balance = user['balance'] - product['price']
+
+        # Kullanıcıya onay mesajı
+        await update.message.reply_text(
+            f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
+            f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+            f"🛍️ <b>Ürün:</b> {product['name']}\n"
+            f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
+            f"🔗 <b>Bağlantı:</b> {profile_link}\n"
+            f"💎 <b>Yeni Bakiye:</b> {new_balance} Puan\n\n"
+            f"⏳ <b>Siparişiniz Beklemede</b>",
+            parse_mode=ParseMode.HTML
+        )
+
+        # Log kanalına gönder
+        log_text = (
+            f"🛒 <b>Sipariş Geldi</b>\n\n"
+            f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
+            f"👤 <b>Kullanıcı ID:</b> {user_id}\n"
+            f"🛍️ <b>Ürün:</b> {product['name']}\n"
+            f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
+            f"🔗 <b>Bağlantı:</b> {profile_link}\n"
+            f"📅 <b>Tarih:</b> {order_date}"
+        )
+        log_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton('✅ Onayla', callback_data=f'admin_approve_{order_id}'),
+                InlineKeyboardButton('❌ Reddet', callback_data=f'admin_reject_{order_id}')
+            ]
+        ])
+        try:
+            log_msg = await context.bot.send_message(
+                LOG_CHANNEL,
+                log_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=log_markup
+            )
+            # log_message_id-ni saxla
+            conn2 = get_conn()
+            try:
+                c2 = conn2.cursor()
+                c2.execute('UPDATE orders SET log_message_id = %s WHERE order_id = %s',
+                           (log_msg.message_id, order_id))
+                conn2.commit()
+            except Exception as e:
+                logger.error(f"log_message_id save error: {e}")
+            finally:
+                put_conn(conn2)
+        except Exception as e:
+            logger.error(f"log channel send error: {e}")
+
+        return
+
+    # ===== TRANSFER BEKLEME =====
+    elif context.user_data.get('awaiting_transfer'):
         if text == '/iptal':
             context.user_data['awaiting_transfer'] = False
             await update.message.reply_text(get_text('transfer_cancelled', lang))
@@ -1035,19 +1502,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn = get_conn()
             try:
                 c = conn.cursor()
-
                 if user['last_transfer_date'] == today:
                     c.execute('UPDATE users SET daily_transfer_count = daily_transfer_count + 1 WHERE user_id = %s', (user_id,))
                 else:
                     c.execute('UPDATE users SET daily_transfer_count = 1, last_transfer_date = %s WHERE user_id = %s', (today, user_id))
-
                 c.execute('UPDATE users SET balance = balance - %s WHERE user_id = %s', (amount + 1, user_id))
                 c.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s', (amount, receiver_id))
-
                 c.execute('''INSERT INTO transfers (sender_id, receiver_id, amount, transfer_date)
                             VALUES (%s, %s, %s, %s)''',
                          (user_id, receiver_id, amount, datetime.now().strftime('%Y-%m-%d %H:%M')))
-
                 conn.commit()
             except Exception as e:
                 logger.error(f"transfer error: {e}")
@@ -1059,7 +1522,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data['awaiting_transfer'] = False
             new_balance = user['balance'] - (amount + 1)
-
             success_msg = get_text('transfer_success', lang, amount=amount, receiver_id=receiver_id, new_balance=new_balance)
             await update.message.reply_text(success_msg)
 
@@ -1080,6 +1542,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text(get_text('transfer_format_error', lang))
 
+    # ===== SUPPORT BEKLEME =====
     elif context.user_data.get('awaiting_support'):
         if text == '/iptal':
             context.user_data['awaiting_support'] = False
@@ -1087,7 +1550,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         context.user_data['awaiting_support'] = False
-
         support_log = f"💬 YENİ DESTEK MESAJI\n\n👤 Kullanıcı: {user_id}\n💬 Mesaj:\n{text}\n\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         try:
             await context.bot.send_message(LOG_CHANNEL, support_log)
@@ -1097,7 +1559,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(ADMIN_ID, f"Yeni destek mesajı:\n\nKullanıcı: {user_id}\nMesaj: {text}")
         except Exception as e:
             logger.error(f"support admin notify error: {e}")
-
         await update.message.reply_text(get_text('support_sent', lang))
 
 # ===== ADMIN COMMANDS =====
@@ -1105,33 +1566,27 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
-
     if len(context.args) < 4:
         await update.message.reply_text('📝 Kullanım: /admin_add_product "ad" kategori fiyat stok [vip]')
         return
-
     try:
         vip_only = False
         args = context.args
         if args[-1].lower() in ('vip', 'true', '1'):
             vip_only = True
             args = args[:-1]
-
         name = ' '.join(args[:-3]).strip('"')
         category = args[-3]
         price = int(args[-2])
         stock = int(args[-1])
-
         conn = get_conn()
         try:
             c = conn.cursor()
             c.execute('''INSERT INTO products (name, category, price, stock, vip_only)
-                        VALUES (%s, %s, %s, %s, %s)
-                        RETURNING product_id''',
+                        VALUES (%s, %s, %s, %s, %s) RETURNING product_id''',
                      (name, category, price, stock, vip_only))
             product_id = c.fetchone()[0]
             conn.commit()
-
             vip_tag = '👑 VIP' if vip_only else ''
             await update.message.reply_text(f'✅ Ürün eklendi!\n\nID: {product_id}\n📝 Ad: {name}\n📂 Kategori: {category}\n💰 Fiyat: {price}\n📦 Stok: {stock} {vip_tag}')
         except Exception as e:
@@ -1147,15 +1602,12 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
-
     if len(context.args) < 2:
         await update.message.reply_text('📝 Kullanım: /admin_stock <ürün_id> <yeni_stok>')
         return
-
     try:
         product_id = int(context.args[0])
         new_stock = int(context.args[1])
-
         conn = get_conn()
         try:
             c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1163,7 +1615,6 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute('SELECT name, stock FROM products WHERE product_id = %s', (product_id,))
             product = c.fetchone()
             conn.commit()
-
             if product:
                 await update.message.reply_text(f'✅ Stok güncellendi!\n\n📝 Ürün: {product["name"]}\n📦 Yeni Stok: {new_stock}')
             else:
@@ -1181,7 +1632,6 @@ async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
-
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -1192,57 +1642,46 @@ async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         products = []
     finally:
         put_conn(conn)
-
     if not products:
         await update.message.reply_text('📦 Ürün bulunamadı!')
         return
-
-    text = '📦 TÜM ÜRÜNLER\n\n'
+    text = '📦 <b>TÜM ÜRÜNLER</b>\n\n'
     for p in products:
         vip_tag = '👑' if p['vip_only'] else ''
-        text += f"ID: {p['product_id']} | {p['name']} ({p['category']}) | 💰{p['price']} | 📦{p['stock']} {vip_tag}\n"
-
-    await update.message.reply_text(text)
+        stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
+        text += f"<b>ID: {p['product_id']}</b> | {p['name']} ({p['category']}) | 💰{p['price']} | 📦{stock_text} {vip_tag}\n"
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
-
     if len(context.args) < 2:
         await update.message.reply_text('📝 Kullanım: /admin_give <user_id> <puan>')
         return
-
     try:
         target_user_id = int(context.args[0])
         points = int(context.args[1])
-
         user_before = get_user(target_user_id)
         if not user_before:
             await update.message.reply_text('❌ Kullanıcı bulunamadı!')
             return
-
         update_balance(target_user_id, points)
-
         user_after = get_user(target_user_id)
         await update.message.reply_text(f'✅ {points} puan verildi!\n\n👤 ID: {target_user_id}\n💎 Yeni Bakiye: {user_after["balance"]}')
     except Exception as e:
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_set_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin manuel olarak VIP verebilir/kaldırabilir: /admin_vip <user_id> <on/off>"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
-
     if len(context.args) < 2:
         await update.message.reply_text('📝 Kullanım: /admin_vip <user_id> <on/off>')
         return
-
     try:
         target_user_id = int(context.args[0])
         status = context.args[1].lower() in ('on', 'true', '1', 'evet')
-
         conn = get_conn()
         try:
             c = conn.cursor()
@@ -1262,41 +1701,71 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
-
     conn = get_conn()
     try:
         c = conn.cursor()
-
         c.execute('SELECT COUNT(*) FROM users')
         total_users = c.fetchone()[0]
-
         c.execute('SELECT COUNT(*) FROM users WHERE vip_status = true')
         vip_users = c.fetchone()[0]
-
         c.execute('SELECT COUNT(*) FROM orders')
         total_orders = c.fetchone()[0]
-
+        c.execute("SELECT COUNT(*) FROM orders WHERE status = 'Beklemede'")
+        pending_orders = c.fetchone()[0]
         c.execute('SELECT SUM(balance) FROM users')
         total_balance = c.fetchone()[0] or 0
-
         c.execute('SELECT COUNT(*) FROM products')
         total_products = c.fetchone()[0]
-
-        text = f'''📊 BOT STATİSTİKLERİ
-
-👥 Toplam Kullanıcı: {total_users}
-👑 VIP Kullanıcı: {vip_users}
-📦 Toplam Sipariş: {total_orders}
-💎 Toplam Bakiye: {total_balance}
-🛍️ Toplam Ürün: {total_products}
-📅 Tarih: {datetime.now().strftime('%Y-%m-%d %H:%M')}'''
-
-        await update.message.reply_text(text)
+        text = (
+            f'📊 <b>BOT STATİSTİKLERİ</b>\n\n'
+            f'👥 <b>Toplam Kullanıcı:</b> {total_users}\n'
+            f'👑 <b>VIP Kullanıcı:</b> {vip_users}\n'
+            f'📦 <b>Toplam Sipariş:</b> {total_orders}\n'
+            f'⏳ <b>Bekleyen Sipariş:</b> {pending_orders}\n'
+            f'💎 <b>Toplam Bakiye:</b> {total_balance}\n'
+            f'🛍️ <b>Toplam Ürün:</b> {total_products}\n'
+            f'📅 <b>Tarih:</b> {datetime.now().strftime("%Y-%m-%d %H:%M")}'
+        )
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error(f"stats error: {e}")
         await update.message.reply_text(f'❌ Hata: {str(e)}')
     finally:
         put_conn(conn)
+
+async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bekleyen siparişleri listele"""
+    if update.message.from_user.id != ADMIN_ID:
+        await update.message.reply_text('❌ Yetkiniz yok!')
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('''
+            SELECT o.*, p.name as product_name, p.price as product_price
+            FROM orders o JOIN products p ON o.product_id = p.product_id
+            WHERE o.status = 'Beklemede'
+            ORDER BY o.order_id DESC
+            LIMIT 20
+        ''')
+        orders = c.fetchall()
+    except Exception as e:
+        logger.error(f"admin_orders error: {e}")
+        orders = []
+    finally:
+        put_conn(conn)
+
+    if not orders:
+        await update.message.reply_text('✅ Bekleyen sipariş yok!')
+        return
+
+    text = f'⏳ <b>Bekleyen Siparişler</b> ({len(orders)}):\n\n'
+    for o in orders:
+        text += (
+            f"<b>#{o['order_id']}</b> | {o['product_name']} | {o['product_price']}P\n"
+            f"👤 {o['user_id']} | 🔗 {o['profile_link']}\n\n"
+        )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 # ===== MAIN =====
 def main():
@@ -1315,9 +1784,11 @@ def main():
     app.add_handler(CommandHandler('admin_give', admin_give_points))
     app.add_handler(CommandHandler('admin_vip', admin_set_vip))
     app.add_handler(CommandHandler('admin_stats', admin_stats))
+    app.add_handler(CommandHandler('admin_orders', admin_orders))
 
     logger.info("Bot başlatılıyor...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
+
