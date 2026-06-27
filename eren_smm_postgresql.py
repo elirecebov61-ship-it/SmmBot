@@ -97,6 +97,12 @@ def init_db():
         except Exception:
             pass
 
+        c.execute('''CREATE TABLE IF NOT EXISTS admins (
+            admin_id BIGINT PRIMARY KEY,
+            added_by BIGINT,
+            added_date TEXT
+        )''')
+
         c.execute('CREATE INDEX IF NOT EXISTS idx_users_id ON users(user_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_transfers_sender ON transfers(sender_id)')
@@ -456,6 +462,20 @@ LANG = {
 }
 
 # ===== HELPER FUNCTIONS =====
+def is_admin(user_id):
+    """Həm əsas admin həm də əlavə edilmiş adminlər"""
+    if user_id == ADMIN_ID:
+        return True
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT 1 FROM admins WHERE admin_id = %s', (user_id,))
+        return c.fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        put_conn(conn)
+
 def get_user(user_id):
     conn = get_conn()
     try:
@@ -1073,7 +1093,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ===== ADMIN: Siparişi Onayla =====
         elif data.startswith('admin_approve_'):
-            if user_id != ADMIN_ID:
+            if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
                 return
             order_id = int(data.split('_')[2])
@@ -1081,7 +1101,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ===== ADMIN: Siparişi Reddet =====
         elif data.startswith('admin_reject_'):
-            if user_id != ADMIN_ID:
+            if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
                 return
             order_id = int(data.split('_')[2])
@@ -1089,7 +1109,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ===== ADMIN: Siparişi Tamamla =====
         elif data.startswith('admin_complete_'):
-            if user_id != ADMIN_ID:
+            if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
                 return
             order_id = int(data.split('_')[2])
@@ -1563,7 +1583,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ADMIN COMMANDS =====
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
+    if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 4:
@@ -1599,7 +1619,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
+    if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 2:
@@ -1629,7 +1649,7 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
+    if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     conn = get_conn()
@@ -1653,7 +1673,7 @@ async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
+    if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 2:
@@ -1673,7 +1693,7 @@ async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_set_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
+    if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 2:
@@ -1698,7 +1718,7 @@ async def admin_set_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
+    if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     conn = get_conn()
@@ -1735,7 +1755,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Bekleyen siparişleri listele"""
-    if update.message.from_user.id != ADMIN_ID:
+    if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     conn = get_conn()
@@ -1767,6 +1787,101 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+
+async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Yalnız əsas admin istifadə edə bilər: /yetki <user_id>"""
+    if update.message.from_user.id != ADMIN_ID:
+        await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text('📝 Kullanım: /yetki <user_id>')
+        return
+    try:
+        target_id = int(context.args[0])
+        if target_id == ADMIN_ID:
+            await update.message.reply_text('⚠️ Ana admin zaten yetkili!')
+            return
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                'INSERT INTO admins (admin_id, added_by, added_date) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING',
+                (target_id, ADMIN_ID, datetime.now().strftime('%Y-%m-%d %H:%M'))
+            )
+            conn.commit()
+            await update.message.reply_text(
+                f'✅ <b>{target_id}</b> ID'li kullanıcıya yetki verildi!\n\n'
+                f'Bu kişi artık:\n'
+                f'• Log kanalında siparişleri onaylayabilir/reddedebilir\n'
+                f'• /admin_give komutuyla puan ekleyebilir\n\n'
+                f'Yetkiyi kaldırmak için: /yetkikal {target_id}',
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"cmd_yetki error: {e}")
+            conn.rollback()
+            await update.message.reply_text(f'❌ Hata: {str(e)}')
+        finally:
+            put_conn(conn)
+    except ValueError:
+        await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
+
+async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Yetkini geri al: /yetkikal <user_id>"""
+    if update.message.from_user.id != ADMIN_ID:
+        await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text('📝 Kullanım: /yetkikal <user_id>')
+        return
+    try:
+        target_id = int(context.args[0])
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute('DELETE FROM admins WHERE admin_id = %s', (target_id,))
+            deleted = c.rowcount
+            conn.commit()
+            if deleted:
+                await update.message.reply_text(f'✅ <b>{target_id}</b> ID'li kullanıcının yetkisi kaldırıldı!', parse_mode=ParseMode.HTML)
+            else:
+                await update.message.reply_text(f'⚠️ {target_id} zaten yetkili değil!')
+        except Exception as e:
+            logger.error(f"cmd_yetkikal error: {e}")
+            conn.rollback()
+            await update.message.reply_text(f'❌ Hata: {str(e)}')
+        finally:
+            put_conn(conn)
+    except ValueError:
+        await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
+
+async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Yetkili adminləri göstər"""
+    if update.message.from_user.id != ADMIN_ID:
+        await update.message.reply_text('❌ Yetkiniz yok!')
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('SELECT * FROM admins ORDER BY added_date DESC')
+        admins = c.fetchall()
+    except Exception as e:
+        logger.error(f"cmd_yetkiler error: {e}")
+        admins = []
+    finally:
+        put_conn(conn)
+
+    if not admins:
+        await update.message.reply_text('📋 Henüz yetkili admin eklenmemiş.\n\nEklemek için: /yetki <user_id>')
+        return
+
+    text = '👥 <b>Yetkili Adminler</b>\n\n'
+    for a in admins:
+        text += f"🔹 <b>{a['admin_id']}</b> — {a['added_date']}\n"
+    text += f'\n🔸 <b>Ana Admin:</b> {ADMIN_ID}'
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
 # ===== MAIN =====
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -1785,6 +1900,9 @@ def main():
     app.add_handler(CommandHandler('admin_vip', admin_set_vip))
     app.add_handler(CommandHandler('admin_stats', admin_stats))
     app.add_handler(CommandHandler('admin_orders', admin_orders))
+    app.add_handler(CommandHandler('yetki', cmd_yetki))
+    app.add_handler(CommandHandler('yetkikal', cmd_yetkikal))
+    app.add_handler(CommandHandler('yetkiler', cmd_yetkiler))
 
     logger.info("Bot başlatılıyor...")
     app.run_polling(drop_pending_updates=True)
