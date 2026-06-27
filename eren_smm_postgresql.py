@@ -73,10 +73,6 @@ PREMIUM_EMOJI_MAP = {
 # Emoji-ləri uzunluğa görə sıralayırıq (uzun olanlar əvvəl yoxlanmalı)
 _EMOJI_KEYS_SORTED = sorted(PREMIUM_EMOJI_MAP.keys(), key=len, reverse=True)
 
-# Telegram Bot API 9.4+ button style sabitleri
-BTN_PRIMARY = 'primary'   # Mavi
-BTN_SUCCESS = 'success'   # Yaşıl
-BTN_DANGER  = 'danger'    # Qırmızı
 
 # ===== DATABASE CONNECTION POOL =====
 db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, DATABASE_URL)
@@ -620,17 +616,8 @@ async def edit_rich(query, html_text, reply_markup=None):
 
 # ===== BUTTON HELPER =====
 def btn(text, callback_data, style=None, icon_custom_emoji_id=None):
-    """
-    InlineKeyboardButton yaradır.
-    style: 'primary' (mavi), 'success' (yaşıl), 'danger' (qırmızı)
-    icon_custom_emoji_id: düymənin solunda premium emoji göstərir
-    """
-    kwargs = {'callback_data': callback_data}
-    if style:
-        kwargs['style'] = style
-    if icon_custom_emoji_id:
-        kwargs['icon_custom_emoji_id'] = icon_custom_emoji_id
-    return InlineKeyboardButton(text, **kwargs)
+    """InlineKeyboardButton yaradır. style/icon parametrləri gələcək üçün saxlanıb."""
+    return InlineKeyboardButton(text, callback_data=callback_data)
 
 # ===== HELPER FUNCTIONS =====
 def is_admin(user_id):
