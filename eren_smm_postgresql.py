@@ -661,7 +661,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.message:
         await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    else:
+    elif update.callback_query:
         await safe_edit(update.callback_query, welcome_text, reply_markup)
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
