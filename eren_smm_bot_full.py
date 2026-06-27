@@ -1,16 +1,19 @@
 import logging
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
-import sqlite3
 from datetime import datetime, timedelta
 import json
 
 # ===== CONFIGURATION =====
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # @BotFather-dan alacaqsan
-ADMIN_ID = 8034872992
-LOG_CHANNEL = -1003895644077
-START_BALANCE = 0
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8034872992"))
+LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "-1003895644077"))
+START_BALANCE = int(os.getenv("START_BALANCE", "0"))
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/eren_smm")
 
 # Logging
 logging.basicConfig(
@@ -19,18 +22,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ===== DATABASE =====
+# ===== DATABASE CONNECTION =====
+def get_db():
+    """PostgreSQL bağlantısı aç"""
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = sqlite3.connect('eren_smm.db')
+    """Database cədvəllərini yaratmaq"""
+    conn = get_db()
     c = conn.cursor()
     
     c.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
+        user_id BIGINT PRIMARY KEY,
         username TEXT,
         balance INTEGER DEFAULT 0,
-        vip_status BOOLEAN DEFAULT 0,
+        vip_status BOOLEAN DEFAULT FALSE,
         referrals INTEGER DEFAULT 0,
-        daily_bonus_used BOOLEAN DEFAULT 0,
+        daily_bonus_used BOOLEAN DEFAULT FALSE,
         last_bonus_date TEXT,
         daily_transfer_count INTEGER DEFAULT 0,
         last_transfer_date TEXT,
@@ -39,45 +47,56 @@ def init_db():
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS products (
-        product_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        category TEXT,
-        price INTEGER,
-        stock INTEGER,
-        vip_only BOOLEAN DEFAULT 0,
+        product_id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        price INTEGER NOT NULL,
+        stock INTEGER NOT NULL,
+        vip_only BOOLEAN DEFAULT FALSE,
         description TEXT
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS orders (
-        order_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        product_id INTEGER,
-        quantity INTEGER,
+        order_id SERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(user_id),
+        product_id INTEGER NOT NULL REFERENCES products(product_id),
+        quantity INTEGER NOT NULL,
         status TEXT DEFAULT 'Alındı',
         order_date TEXT,
         profile_link TEXT
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS transfers (
-        transfer_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sender_id INTEGER,
-        receiver_id INTEGER,
-        amount INTEGER,
+        transfer_id SERIAL PRIMARY KEY,
+        sender_id BIGINT NOT NULL REFERENCES users(user_id),
+        receiver_id BIGINT NOT NULL REFERENCES users(user_id),
+        amount INTEGER NOT NULL,
         transfer_date TEXT,
         status TEXT DEFAULT 'Başarılı'
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS referrals (
-        referral_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        referrer_id INTEGER,
-        referred_user_id INTEGER,
+        referral_id SERIAL PRIMARY KEY,
+        referrer_id BIGINT NOT NULL REFERENCES users(user_id),
+        referred_user_id BIGINT NOT NULL REFERENCES users(user_id),
         referral_date TEXT
     )''')
     
+    # Index'ler qurulmaq (sürətlik üçün)
+    c.execute('CREATE INDEX IF NOT EXISTS idx_users_id ON users(user_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_transfers_sender ON transfers(sender_id)')
+    
     conn.commit()
+    c.close()
     conn.close()
+    logger.info("Database başlatıldı")
 
-init_db()
+# Başlat
+try:
+    init_db()
+except Exception as e:
+    logger.error(f"Database başlatma hatası: {e}")
 
 # ===== LANGUAGE =====
 LANG = {
@@ -99,10 +118,8 @@ LANG = {
         'donate': '⭐️ Bağış Yap',
         'back_to_menu': '← Ana Merkeze Dön',
         'profile_text': '👤 Profil Özeti\n\n🆔 Kullanıcı ID: {user_id}\n💎 Cüzdan Bakiyesi: {balance} Puan\n🤝 Davet Edilen: {referrals} Kişi\n💼 Toplam Sipariş: {orders}\n📆 Kayıt Tarihi: {reg_date}\n\n💡 VIP olarak: 2x Günlük Bonus, +2 Davet Puanı, VIP Mağazaya erişim!',
-        'vip_text': '👑 VIP Satın Al\n\nVIP olmak için 20 referans şart!\n\n✅ Mevcut referansınız: {current}/20\n❌ Eksik referans: {missing} kişi daha davet edin!\n\n👑 VIP Avantajları:\n✅ VIP Mağazaya erişim\n✅ Günde 2 kez günlük bonus\n✅ Her davette +2 Puan',
         'daily_bonus_success': '🎁 Günlük Bonus Alındı!\n\n➕ +1 Puan hesabınıza eklendi!\n💎 Yeni Bakiye: {balance} Puan\n\n👍 Bugünkü tüm bonus haklarını kullandın!',
         'daily_bonus_used': '⏳ Yarın tekrar gel!\n\nSonraki bonus: {time}',
-        'get_daily_bonus': '🎁 Günlük Puanı Al',
         'insufficient_balance': '❌ Yetersiz Bakiye!\nGerekli: {needed} Puan\nBakiyeniz: {balance} Puan',
         'transfer_info': '💰 Puan Transfer Sistemi\n\n💎 Bakiyeniz: {balance} Puan\n⏳ Günlük Hak: {daily_left}/2 kaldı\n\n1️⃣ Her transferde bot 1 Puan komisyon keser.\n👤 Alıcı ID ve miktarı girerek transfer yapın.\n\nFormat: AlıcıID|Miktar\nÖrn: 1234567|10',
         'transfer_format_error': '❌ Hatalı format!\nDoğru format: AlıcıID|Miktar\nÖrn: 1234567|10',
@@ -131,7 +148,6 @@ VIP mağaza yalnızca VIP üyelere özel ürünler içerir. 20 referans getirere
 • Davet linkinizle arkadaş getirince +1 Puan (VIP: +2 Puan)
 • Her gün günlük bonus: +1 Puan (VIP: günde 2 kez)
 • Admin tarafından manuel puan yüklenmesiyle
-• Promosyon kodu kullanarak
 
 ━━━━━━━━━━━━━━━━━
 📦 Sipariş Takibi Nasıl Çalışır ⁉️
@@ -141,7 +157,6 @@ Sipariş durumları:
 🟡 Alındı — Sisteme kaydedildi
 🔵 İşlemde — Hazırlanıyor
 🟢 Teslim Edildi — Size iletildi
-🟥 İptal — Puan iade edildi
 
 ━━━━━━━━━━━━━━━━━
 ⁉️ Destek İçin: Destek butonu üzerinden ulaşabilirsiniz ⁉️''',
@@ -164,50 +179,69 @@ Sipariş durumları:
         'raffle': '🎲 Raffle',
         'donate': '⭐️ Donate',
         'back_to_menu': '← Back to Menu',
-        'profile_text': '👤 Profile Summary\n\n🆔 User ID: {user_id}\n💎 Wallet Balance: {balance} Points\n🤝 Invited: {referrals} People\n💼 Total Orders: {orders}\n📆 Registration Date: {reg_date}',
     }
 }
 
 # ===== HELPER FUNCTIONS =====
 def get_user(user_id):
-    conn = sqlite3.connect('eren_smm.db')
-    c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-    user = c.fetchone()
-    conn.close()
-    return user
+    """Kullanıcı bilgisini al"""
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
+        user = c.fetchone()
+        c.close()
+        conn.close()
+        return user
+    except Exception as e:
+        logger.error(f"get_user error: {e}")
+        return None
 
 def create_user(user_id, username):
-    conn = sqlite3.connect('eren_smm.db')
-    c = conn.cursor()
-    c.execute('''INSERT INTO users (user_id, username, balance, registration_date)
-                 VALUES (?, ?, ?, ?)''',
-              (user_id, username, START_BALANCE, datetime.now().strftime('%Y-%m-%d %H:%M')))
-    conn.commit()
-    conn.close()
+    """Yeni kullanıcı yaratmaq"""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('''INSERT INTO users (user_id, username, balance, registration_date)
+                     VALUES (%s, %s, %s, %s)
+                     ON CONFLICT (user_id) DO NOTHING''',
+                  (user_id, username, START_BALANCE, datetime.now().strftime('%Y-%m-%d %H:%M')))
+        conn.commit()
+        c.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"create_user error: {e}")
 
 def update_balance(user_id, amount):
-    conn = sqlite3.connect('eren_smm.db')
-    c = conn.cursor()
-    c.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
-    conn.commit()
-    conn.close()
+    """Bakiyəni dəyiştirmək"""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s', 
+                  (amount, user_id))
+        conn.commit()
+        c.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"update_balance error: {e}")
 
 def get_user_language(user_id):
-    conn = sqlite3.connect('eren_smm.db')
-    c = conn.cursor()
-    c.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else 'TR'
+    """İstifadəçinin dilini al"""
+    try:
+        user = get_user(user_id)
+        return user['language'] if user and user['language'] else 'TR'
+    except:
+        return 'TR'
 
 def get_text(key, user_id, **kwargs):
+    """Dil text'ini al"""
     lang = get_user_language(user_id)
     text = LANG.get(lang, LANG['TR']).get(key, LANG['TR'].get(key, ''))
     return text.format(**kwargs) if kwargs else text
 
 # ===== MAIN HANDLERS =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Başlanğıc komandası"""
     user = update.message.from_user
     user_id = user.id
     
@@ -215,25 +249,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not existing_user:
         create_user(user_id, user.username or f"User{user_id}")
     
-    # Referral check
+    # Referral sistem
     if context.args:
         try:
             referrer_id = int(context.args[0])
             if referrer_id != user_id:
-                conn = sqlite3.connect('eren_smm.db')
-                c = conn.cursor()
-                c.execute('SELECT * FROM referrals WHERE referrer_id = ? AND referred_user_id = ?',
+                conn = get_db()
+                c = conn.cursor(cursor_factory=RealDictCursor)
+                
+                # Referral mövcud mu kontrol et
+                c.execute('SELECT * FROM referrals WHERE referrer_id = %s AND referred_user_id = %s',
                          (referrer_id, user_id))
                 if not c.fetchone():
-                    vip_status = get_user(referrer_id)[3]
-                    bonus = 2 if vip_status else 1
-                    c.execute('''INSERT INTO referrals (referrer_id, referred_user_id, referral_date)
-                               VALUES (?, ?, ?)''',
-                             (referrer_id, user_id, datetime.now().strftime('%Y-%m-%d %H:%M')))
-                    c.execute('UPDATE users SET referrals = referrals + 1 WHERE user_id = ?',
-                             (referrer_id,))
-                    update_balance(referrer_id, bonus)
-                    conn.commit()
+                    referrer = get_user(referrer_id)
+                    if referrer:
+                        bonus = 2 if referrer['vip_status'] else 1
+                        c.execute('''INSERT INTO referrals (referrer_id, referred_user_id, referral_date)
+                                   VALUES (%s, %s, %s)''',
+                                 (referrer_id, user_id, datetime.now().strftime('%Y-%m-%d %H:%M')))
+                        c.execute('UPDATE users SET referrals = referrals + 1 WHERE user_id = %s',
+                                 (referrer_id,))
+                        update_balance(referrer_id, bonus)
+                        conn.commit()
+                
+                c.close()
                 conn.close()
         except:
             pass
@@ -259,66 +298,71 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(get_text('welcome', user_id), reply_markup=reply_markup)
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Düymə klikləri"""
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
     
     if query.data == 'balance':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
-        balance = c.fetchone()[0]
-        conn.close()
+        user = get_user(user_id)
+        balance = user['balance'] if user else 0
         text = f"💎 Bakiye: {balance} Puan"
         keyboard = [[InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif query.data == 'profile':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('SELECT user_id, balance, referrals, registration_date FROM users WHERE user_id = ?',
-                 (user_id,))
-        data = c.fetchone()
-        c.execute('SELECT COUNT(*) FROM orders WHERE user_id = ?', (user_id,))
-        order_count = c.fetchone()[0]
-        conn.close()
-        
-        text = get_text('profile_text', user_id,
-                       user_id=data[0],
-                       balance=data[1],
-                       referrals=data[2],
-                       orders=order_count,
-                       reg_date=data[3])
-        keyboard = [[InlineKeyboardButton(get_text('daily_bonus', user_id), callback_data='daily_bonus'),
-                     InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        user = get_user(user_id)
+        if user:
+            try:
+                conn = get_db()
+                c = conn.cursor()
+                c.execute('SELECT COUNT(*) FROM orders WHERE user_id = %s', (user_id,))
+                order_count = c.fetchone()[0]
+                c.close()
+                conn.close()
+            except:
+                order_count = 0
+            
+            text = get_text('profile_text', user_id,
+                           user_id=user['user_id'],
+                           balance=user['balance'],
+                           referrals=user['referrals'],
+                           orders=order_count,
+                           reg_date=user['registration_date'])
+            keyboard = [[InlineKeyboardButton(get_text('daily_bonus', user_id), callback_data='daily_bonus'),
+                         InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif query.data == 'daily_bonus':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('SELECT last_bonus_date, balance FROM users WHERE user_id = ?', (user_id,))
-        last_bonus, balance = c.fetchone()
-        
-        can_use = True
-        if last_bonus:
-            last_date = datetime.strptime(last_bonus, '%Y-%m-%d')
-            if (datetime.now() - last_date).days == 0:
-                can_use = False
-        
-        if not can_use:
-            text = get_text('daily_bonus_used', user_id, time='24:00')
-            await query.answer(text, show_alert=True)
-            return
-        
-        update_balance(user_id, 1)
-        c.execute('UPDATE users SET last_bonus_date = ? WHERE user_id = ?',
-                 (datetime.now().strftime('%Y-%m-%d'), user_id))
-        conn.commit()
-        conn.close()
-        
-        text = get_text('daily_bonus_success', user_id, balance=balance + 1)
-        keyboard = [[InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        user = get_user(user_id)
+        if user:
+            can_use = True
+            if user['last_bonus_date']:
+                last_date = datetime.strptime(user['last_bonus_date'], '%Y-%m-%d')
+                if (datetime.now() - last_date).days == 0:
+                    can_use = False
+            
+            if not can_use:
+                text = get_text('daily_bonus_used', user_id, time='24:00')
+                await query.answer(text, show_alert=True)
+                return
+            
+            update_balance(user_id, 1)
+            try:
+                conn = get_db()
+                c = conn.cursor()
+                c.execute('UPDATE users SET last_bonus_date = %s WHERE user_id = %s',
+                         (datetime.now().strftime('%Y-%m-%d'), user_id))
+                conn.commit()
+                c.close()
+                conn.close()
+            except Exception as e:
+                logger.error(f"daily_bonus error: {e}")
+            
+            new_balance = user['balance'] + 1
+            text = get_text('daily_bonus_success', user_id, balance=new_balance)
+            keyboard = [[InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif query.data == 'referral':
         text = get_text('referral_link', user_id, user_id=user_id)
@@ -334,19 +378,27 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text('🌍 Lütfen dil tercihinizi yapın:', reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif query.data == 'lang_tr':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('UPDATE users SET language = ? WHERE user_id = ?', ('TR', user_id))
-        conn.commit()
-        conn.close()
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute('UPDATE users SET language = %s WHERE user_id = %s', ('TR', user_id))
+            conn.commit()
+            c.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"lang_tr error: {e}")
         await start(update, context)
     
     elif query.data == 'lang_en':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('UPDATE users SET language = ? WHERE user_id = ?', ('EN', user_id))
-        conn.commit()
-        conn.close()
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute('UPDATE users SET language = %s WHERE user_id = %s', ('EN', user_id))
+            conn.commit()
+            c.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"lang_en error: {e}")
         await start(update, context)
     
     elif query.data == 'shop':
@@ -358,57 +410,50 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(get_text('shop_welcome', user_id), reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif query.data == 'vip_shop':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('SELECT vip_status FROM users WHERE user_id = ?', (user_id,))
-        vip = c.fetchone()[0]
-        conn.close()
-        
-        if not vip:
+        user = get_user(user_id)
+        if user and not user['vip_status']:
             await query.answer(get_text('vip_required_alert', user_id), show_alert=True)
             return
     
     elif query.data == 'orders':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('SELECT * FROM orders WHERE user_id = ?', (user_id,))
-        orders = c.fetchall()
-        conn.close()
+        try:
+            conn = get_db()
+            c = conn.cursor(cursor_factory=RealDictCursor)
+            c.execute('SELECT * FROM orders WHERE user_id = %s', (user_id,))
+            orders = c.fetchall()
+            c.close()
+            conn.close()
+        except:
+            orders = []
         
         if not orders:
             text = get_text('no_orders', user_id)
         else:
             text = f"📦 Siparişleriniz ({len(orders)} adet):\n\n"
             for order in orders:
-                text += f"ID: {order[0]} | Status: {order[4]}\n"
+                text += f"ID: {order['order_id']} | Status: {order['status']}\n"
         
         keyboard = [[InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif query.data == 'transfer':
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('SELECT balance, last_transfer_date, daily_transfer_count FROM users WHERE user_id = ?',
-                 (user_id,))
-        balance, last_transfer, daily_count = c.fetchone()
-        
-        daily_left = 0
-        if last_transfer:
-            last_date = datetime.strptime(last_transfer, '%Y-%m-%d')
-            if (datetime.now() - last_date).days == 0:
-                daily_left = 2 - daily_count
+        user = get_user(user_id)
+        if user:
+            daily_left = 0
+            if user['last_transfer_date']:
+                last_date = datetime.strptime(user['last_transfer_date'], '%Y-%m-%d')
+                if (datetime.now() - last_date).days == 0:
+                    daily_left = 2 - user['daily_transfer_count']
+                else:
+                    daily_left = 2
             else:
                 daily_left = 2
-        else:
-            daily_left = 2
-        
-        conn.close()
-        
-        text = get_text('transfer_info', user_id, balance=balance, daily_left=daily_left)
-        keyboard = [[InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-        
-        context.user_data['awaiting_transfer'] = True
+            
+            text = get_text('transfer_info', user_id, balance=user['balance'], daily_left=daily_left)
+            keyboard = [[InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            
+            context.user_data['awaiting_transfer'] = True
     
     elif query.data == 'raffle':
         text = get_text('no_active_raffle', user_id)
@@ -451,7 +496,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif query.data == 'support':
-        text = get_text('support_text', user_id, balance=get_user(user_id)[2])
+        user = get_user(user_id)
+        text = get_text('support_text', user_id, balance=user['balance'] if user else 0)
         keyboard = [[InlineKeyboardButton(get_text('back_to_menu', user_id), callback_data='main_menu')]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         context.user_data['awaiting_support'] = True
@@ -464,6 +510,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mesaj handler'ı"""
     user_id = update.message.from_user.id
     text = update.message.text
     
@@ -482,41 +529,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             receiver_id = int(parts[0].strip())
             amount = int(parts[1].strip())
             
-            conn = sqlite3.connect('eren_smm.db')
-            c = conn.cursor()
-            
-            c.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
-            sender_balance = c.fetchone()[0]
-            
-            if sender_balance < amount + 1:
+            user = get_user(user_id)
+            if not user or user['balance'] < amount + 1:
                 needed = amount + 1
+                balance = user['balance'] if user else 0
                 await update.message.reply_text(
                     get_text('insufficient_balance', user_id,
                             needed=needed,
-                            balance=sender_balance))
+                            balance=balance))
                 return
             
-            c.execute('SELECT balance FROM users WHERE user_id = ?', (receiver_id,))
-            receiver = c.fetchone()
+            receiver = get_user(receiver_id)
             if not receiver:
                 await update.message.reply_text('❌ Alıcı kullanıcı bulunamadı!')
                 return
             
-            update_balance(user_id, -(amount + 1))
-            update_balance(receiver_id, amount)
+            try:
+                conn = get_db()
+                c = conn.cursor()
+                
+                update_balance(user_id, -(amount + 1))
+                update_balance(receiver_id, amount)
+                
+                c.execute('''INSERT INTO transfers (sender_id, receiver_id, amount, transfer_date)
+                            VALUES (%s, %s, %s, %s)''',
+                         (user_id, receiver_id, amount, datetime.now().strftime('%Y-%m-%d %H:%M')))
+                
+                c.execute('UPDATE users SET daily_transfer_count = daily_transfer_count + 1, last_transfer_date = %s WHERE user_id = %s',
+                         (datetime.now().strftime('%Y-%m-%d'), user_id))
+                
+                conn.commit()
+                c.close()
+                conn.close()
+            except Exception as e:
+                logger.error(f"transfer error: {e}")
+                await update.message.reply_text('❌ Transfer yapılamadı!')
+                return
             
-            c.execute('''INSERT INTO transfers (sender_id, receiver_id, amount, transfer_date)
-                        VALUES (?, ?, ?, ?)''',
-                     (user_id, receiver_id, amount, datetime.now().strftime('%Y-%m-%d %H:%M')))
-            
-            c.execute('UPDATE users SET daily_transfer_count = daily_transfer_count + 1, last_transfer_date = ? WHERE user_id = ?',
-                     (datetime.now().strftime('%Y-%m-%d'), user_id))
-            
-            conn.commit()
-            conn.close()
-            
-            new_balance = sender_balance - (amount + 1)
             context.user_data['awaiting_transfer'] = False
+            new_balance = user['balance'] - (amount + 1)
             
             success_msg = get_text('transfer_success', user_id,
                                   amount=amount,
@@ -524,12 +575,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                   new_balance=new_balance)
             await update.message.reply_text(success_msg)
             
-            # Log to channel
+            # Log kanal'a göndir
             log_msg = f"💸 YENİ TRANSFER\n\n👤 Gönderen: {user_id}\n👤 Alan: {receiver_id}\n💎 Miktar: {amount}\n💰 Komisyon: 1\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             await context.bot.send_message(LOG_CHANNEL, log_msg)
             
-            # Notify receiver
-            receiver_msg = f"✅ {user_id} sizinə {amount} Puan göndərdi!\n💎 Yeni Bakiye: {receiver[0] + amount}"
+            # Alıcıya xəbər ver
+            receiver_msg = f"✅ {user_id} sizə {amount} Puan gönderdi!\n💎 Yeni Bakiye: {receiver['balance'] + amount}"
             await context.bot.send_message(receiver_id, receiver_msg)
         
         except ValueError:
@@ -543,7 +594,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['awaiting_support'] = False
         
-        # Send to admin
+        # Admin'ə göndər
         support_log = f"💬 YENİ DESTEK MESAJI\n\n👤 Kullanıcı: {user_id}\n💬 Mesaj:\n{text}\n\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         await context.bot.send_message(LOG_CHANNEL, support_log)
         await context.bot.send_message(ADMIN_ID, f"Yeni destek mesajı:\n\nKullanıcı: {user_id}\nMesaj: {text}")
@@ -552,17 +603,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ADMIN COMMANDS =====
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ürün əlavə et"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     
     if len(context.args) < 4:
-        await update.message.reply_text(
-            '📝 Kullanım:\n'
-            '/admin_add_product "ad" kategori fiyat stok [vip]\n'
-            'Örn: /admin_add_product "TikTok Followers" tiktok 10 100\n'
-            'VIP: /admin_add_product "VIP Paket" tiktok 50 50 vip'
-        )
+        await update.message.reply_text('📝 Kullanım: /admin_add_product "ad" kategori fiyat stok [vip]')
         return
     
     try:
@@ -570,28 +617,30 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         category = context.args[-3]
         price = int(context.args[-2])
         stock = int(context.args[-1])
-        vip_only = 0
+        vip_only = False
         
-        if len(context.args) > 4 and context.args[-1] == 'vip':
-            vip_only = 1
-            stock = int(context.args[-2])
-        
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('''INSERT INTO products (name, category, price, stock, vip_only)
-                    VALUES (?, ?, ?, ?, ?)''',
-                 (name, category, price, stock, vip_only))
-        product_id = c.lastrowid
-        conn.commit()
-        conn.close()
-        
-        vip_tag = '👑 VIP' if vip_only else ''
-        await update.message.reply_text(f'✅ Ürün eklendi!\n\nID: {product_id}\n📝 Ad: {name}\n📂 Kategori: {category}\n💰 Fiyat: {price}\n📦 Stok: {stock} {vip_tag}')
-    
+        try:
+            conn = get_db()
+            c = conn.cursor()
+            c.execute('''INSERT INTO products (name, category, price, stock, vip_only)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING product_id''',
+                     (name, category, price, stock, vip_only))
+            product_id = c.fetchone()[0]
+            conn.commit()
+            c.close()
+            conn.close()
+            
+            vip_tag = '👑 VIP' if vip_only else ''
+            await update.message.reply_text(f'✅ Ürün eklendi!\n\nID: {product_id}\n📝 Ad: {name}\n📂 Kategori: {category}\n💰 Fiyat: {price}\n📦 Stok: {stock} {vip_tag}')
+        except Exception as e:
+            logger.error(f"add_product error: {e}")
+            await update.message.reply_text(f'❌ Hata: {str(e)}')
     except Exception as e:
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stok dəyiştir"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
@@ -604,31 +653,43 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         product_id = int(context.args[0])
         new_stock = int(context.args[1])
         
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('UPDATE products SET stock = ? WHERE product_id = ?', (new_stock, product_id))
-        c.execute('SELECT name, stock FROM products WHERE product_id = ?', (product_id,))
-        product = c.fetchone()
-        conn.commit()
-        conn.close()
-        
-        if product:
-            await update.message.reply_text(f'✅ Stok güncellendi!\n\n📝 Ürün: {product[0]}\n📦 Yeni Stok: {new_stock}')
-        else:
-            await update.message.reply_text('❌ Ürün bulunamadı!')
+        try:
+            conn = get_db()
+            c = conn.cursor(cursor_factory=RealDictCursor)
+            c.execute('UPDATE products SET stock = %s WHERE product_id = %s', 
+                     (new_stock, product_id))
+            c.execute('SELECT name, stock FROM products WHERE product_id = %s', (product_id,))
+            product = c.fetchone()
+            conn.commit()
+            c.close()
+            conn.close()
+            
+            if product:
+                await update.message.reply_text(f'✅ Stok güncellendi!\n\n📝 Ürün: {product["name"]}\n📦 Yeni Stok: {new_stock}')
+            else:
+                await update.message.reply_text('❌ Ürün bulunamadı!')
+        except Exception as e:
+            logger.error(f"stock error: {e}")
+            await update.message.reply_text(f'❌ Hata: {str(e)}')
     except Exception as e:
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bütün məhsulları göstər"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     
-    conn = sqlite3.connect('eren_smm.db')
-    c = conn.cursor()
-    c.execute('SELECT product_id, name, category, price, stock, vip_only FROM products')
-    products = c.fetchall()
-    conn.close()
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('SELECT product_id, name, category, price, stock, vip_only FROM products')
+        products = c.fetchall()
+        c.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"products error: {e}")
+        products = []
     
     if not products:
         await update.message.reply_text('📦 Ürün bulunamadı!')
@@ -636,12 +697,13 @@ async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = '📦 TÜM ÜRÜNLER\n\n'
     for p in products:
-        vip_tag = '👑' if p[5] else ''
-        text += f"ID: {p[0]} | {p[1]} ({p[2]}) | 💰{p[3]} | 📦{p[4]} {vip_tag}\n"
+        vip_tag = '👑' if p['vip_only'] else ''
+        text += f"ID: {p['product_id']} | {p['name']} ({p['category']}) | 💰{p['price']} | 📦{p['stock']} {vip_tag}\n"
     
     await update.message.reply_text(text)
 
 async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Puan ver"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
@@ -656,54 +718,55 @@ async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         update_balance(user_id, points)
         
-        conn = sqlite3.connect('eren_smm.db')
-        c = conn.cursor()
-        c.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
-        new_balance = c.fetchone()
-        conn.close()
-        
-        if new_balance:
-            await update.message.reply_text(f'✅ {points} puan verildi!\n\n👤 ID: {user_id}\n💎 Yeni Bakiye: {new_balance[0]}')
+        user = get_user(user_id)
+        if user:
+            await update.message.reply_text(f'✅ {points} puan verildi!\n\n👤 ID: {user_id}\n💎 Yeni Bakiye: {user["balance"] + points}')
         else:
             await update.message.reply_text('❌ Kullanıcı bulunamadı!')
     except Exception as e:
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """İstatistika"""
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     
-    conn = sqlite3.connect('eren_smm.db')
-    c = conn.cursor()
-    
-    c.execute('SELECT COUNT(*) FROM users')
-    total_users = c.fetchone()[0]
-    
-    c.execute('SELECT COUNT(*) FROM users WHERE vip_status = 1')
-    vip_users = c.fetchone()[0]
-    
-    c.execute('SELECT COUNT(*) FROM orders')
-    total_orders = c.fetchone()[0]
-    
-    c.execute('SELECT SUM(balance) FROM users')
-    total_balance = c.fetchone()[0] or 0
-    
-    c.execute('SELECT COUNT(*) FROM products')
-    total_products = c.fetchone()[0]
-    
-    conn.close()
-    
-    text = f'''📊 BOT STATİSTİKLERİ
-    
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        
+        c.execute('SELECT COUNT(*) FROM users')
+        total_users = c.fetchone()[0]
+        
+        c.execute('SELECT COUNT(*) FROM users WHERE vip_status = true')
+        vip_users = c.fetchone()[0]
+        
+        c.execute('SELECT COUNT(*) FROM orders')
+        total_orders = c.fetchone()[0]
+        
+        c.execute('SELECT SUM(balance) FROM users')
+        total_balance = c.fetchone()[0] or 0
+        
+        c.execute('SELECT COUNT(*) FROM products')
+        total_products = c.fetchone()[0]
+        
+        c.close()
+        conn.close()
+        
+        text = f'''📊 BOT STATİSTİKLERİ
+        
 👥 Toplam Kullanıcı: {total_users}
 👑 VIP Kullanıcı: {vip_users}
 📦 Toplam Sipariş: {total_orders}
 💎 Toplam Bakiye: {total_balance}
 🛍️ Toplam Ürün: {total_products}
 📅 Tarih: {datetime.now().strftime('%Y-%m-%d %H:%M')}'''
-    
-    await update.message.reply_text(text)
+        
+        await update.message.reply_text(text)
+    except Exception as e:
+        logger.error(f"stats error: {e}")
+        await update.message.reply_text(f'❌ Hata: {str(e)}')
 
 # ===== MAIN =====
 def main():
@@ -720,8 +783,8 @@ def main():
     app.add_handler(CommandHandler('admin_give', admin_give_points))
     app.add_handler(CommandHandler('admin_stats', admin_stats))
     
+    logger.info("Bot başlatılıyor...")
     app.run_polling()
 
 if __name__ == '__main__':
     main()
-
