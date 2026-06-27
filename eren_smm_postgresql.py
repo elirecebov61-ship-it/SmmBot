@@ -653,11 +653,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
+    answered = False
 
-    try:
-        await query.answer()
-    except Exception as e:
-        logger.error(f"query.answer error: {e}")
+    async def answer_once(alert_text=None, show_alert=False):
+        """Telegram bir callback query-ye yalnizca BIR defe cevap vermeye izin verir.
+        Ikinci cagiri sessizce yutulup hicbir sey gostermez. Bu fonksiyon bunu onler."""
+        nonlocal answered
+        if answered:
+            return
+        answered = True
+        try:
+            if alert_text:
+                await query.answer(alert_text, show_alert=show_alert)
+            else:
+                await query.answer()
+        except Exception as e:
+            logger.error(f"query.answer error: {e}")
 
     user = get_user(user_id)
     if not user:
@@ -667,14 +678,18 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_user_language(user)
     back_markup = back_to_menu_markup(lang)
 
+    # Alert gosterecek callback'ler disinda hemen spinner'i durdur (hiz icin).
+    # Alert gosterilecek callback'lerde answer_once alert ile cagrilacak,
+    # bu yuzden burada bos cevap GONDERMIYORUZ - tek cevap hakkimizi alert icin saklıyoruz.
+    data_preview = query.data or ''
+    will_show_alert = (data_preview in ('daily_bonus', 'vip_shop')) or data_preview.startswith('buy_')
+    if not will_show_alert:
+        await answer_once()
+
     try:
         data = query.data
 
-        if data == 'balance':
-            text = f"💎 <b>{get_text('balance', lang)}:</b> {user['balance']} Puan" if lang == 'TR' else f"💎 <b>{get_text('balance', lang)}:</b> {user['balance']} Points"
-            await safe_edit(query, text, back_markup)
-
-        elif data == 'profile':
+        if data in ('balance', 'profile'):
             conn = get_conn()
             try:
                 c = conn.cursor()
@@ -718,7 +733,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 used_today = 0
 
             if used_today >= max_per_day:
-                await query.answer(get_text('daily_bonus_used', lang), show_alert=True)
+                await answer_once(get_text('daily_bonus_used', lang), show_alert=True)
                 return
 
             used_today += 1
@@ -733,6 +748,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"daily_bonus error: {e}")
             finally:
                 put_conn(conn)
+
+            await answer_once()
 
             new_balance = user['balance'] + 1
             if is_vip and max_per_day == 2:
@@ -794,9 +811,10 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == 'vip_shop':
             if not user['vip_status']:
-                await query.answer(get_text('vip_required_alert', lang), show_alert=True)
+                await answer_once(get_text('vip_required_alert', lang), show_alert=True)
                 return
 
+            await answer_once()
             products = get_all_vip_products()
             if not products:
                 text = get_text('category_empty', lang, category=('VIP Mağaza' if lang == 'TR' else 'VIP Shop'))
@@ -943,16 +961,16 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 put_conn(conn)
 
             if not product or product['stock'] <= 0:
-                await query.answer('❌ Ürün bulunamadı veya stok yok!', show_alert=True)
+                await answer_once('❌ Ürün bulunamadı veya stok yok!', show_alert=True)
                 return
 
             if user['balance'] < product['price']:
-                await query.answer(get_text('insufficient_balance', lang,
+                await answer_once(get_text('insufficient_balance', lang,
                                              needed=product['price'],
                                              balance=user['balance']), show_alert=True)
                 return
 
-            await query.answer('🛒 Sipariş akışı için bu adımı kendi iş mantığınıza göre genişletin (profil linki isteme vb).', show_alert=True)
+            await answer_once('🛒 Sipariş akışı için bu adımı kendi iş mantığınıza göre genişletin (profil linki isteme vb).', show_alert=True)
 
         else:
             logger.warning(f"Bilinmeyen callback_data: {data}")
@@ -1286,7 +1304,10 @@ def main():
 
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CallbackQueryHandler(button_click))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(
+        (filters.TEXT & ~filters.COMMAND) | filters.Regex(r'^/iptal$'),
+        handle_message
+    ))
 
     app.add_handler(CommandHandler('admin_add_product', admin_add_product))
     app.add_handler(CommandHandler('admin_stock', admin_stock))
