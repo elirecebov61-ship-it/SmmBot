@@ -16,7 +16,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "8034872992"))
 LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "-1003895644077"))
 START_BALANCE = int(os.getenv("START_BALANCE", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/eren_smm")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "DrxtrooMarketBot")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "WextyroMarketBot")
 VIP_REFERRAL_REQUIREMENT = int(os.getenv("VIP_REFERRAL_REQUIREMENT", "20"))
 
 # Logging
