@@ -2067,6 +2067,101 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
+async def admin_delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tək bir məhsulu ID-yə görə sil: /urunsil <ürün_id>"""
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text('❌ Yetkiniz yok!')
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text('📝 Kullanım: /urunsil <ürün_id>')
+        return
+    try:
+        product_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text('❌ Geçersiz ürün ID!')
+        return
+
+    conn = get_conn()
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('SELECT name, category FROM products WHERE product_id = %s', (product_id,))
+        product = c.fetchone()
+        if not product:
+            await update.message.reply_text('❌ Ürün bulunamadı!')
+            return
+
+        try:
+            c.execute('DELETE FROM products WHERE product_id = %s', (product_id,))
+            conn.commit()
+            await update.message.reply_text(
+                f'✅ Ürün silindi!\n\n📝 Ad: {product["name"]}\n📂 Kategori: {product["category"]}'
+            )
+        except Exception as e:
+            conn.rollback()
+            # Yabancı anahtar hatası: bu ürüne ait siparişler var
+            if 'foreign key' in str(e).lower() or 'violates' in str(e).lower():
+                await update.message.reply_text(
+                    f'❌ Silinemedi! "{product["name"]}" ürününe ait mevcut siparişler var.\n\n'
+                    f'Önce ilgili siparişleri tamamlayın/reddedin, veya stoğu 0 yapıp ürünü pasif bırakın.'
+                )
+            else:
+                logger.error(f"admin_delete_product error: {e}")
+                await update.message.reply_text(f'❌ Hata: {str(e)}')
+    except Exception as e:
+        logger.error(f"admin_delete_product fetch error: {e}")
+        await update.message.reply_text(f'❌ Hata: {str(e)}')
+    finally:
+        put_conn(conn)
+
+async def admin_delete_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bir kateqoriyaya aid bütün məhsulları sil: /kategorisil <kategori_adı>
+    Kateqoriya adı case-insensitive uyğunlaşdırılır (tiktok/TikTok/TIKTOK hamısı eyni sayılır)."""
+    if not is_admin(update.message.from_user.id):
+        await update.message.reply_text('❌ Yetkiniz yok!')
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text('📝 Kullanım: /kategorisil <kategori_adı>')
+        return
+
+    category_input = ' '.join(context.args).strip()
+    conn = get_conn()
+    try:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute('SELECT product_id, name FROM products WHERE category ILIKE %s', (category_input,))
+        products = c.fetchall()
+
+        if not products:
+            await update.message.reply_text(f'❌ "{category_input}" kategorisinde ürün bulunamadı!')
+            return
+
+        deleted = []
+        skipped = []
+        for p in products:
+            try:
+                c.execute('DELETE FROM products WHERE product_id = %s', (p['product_id'],))
+                conn.commit()
+                deleted.append(p['name'])
+            except Exception:
+                conn.rollback()
+                skipped.append(p['name'])
+
+        display_category = normalize_category(category_input)
+        text = f'✅ <b>{display_category}</b> kategorisinden {len(deleted)} ürün silindi!\n'
+        if deleted:
+            text += '\n' + '\n'.join(f'• {name}' for name in deleted)
+        if skipped:
+            text += (
+                f'\n\n⚠️ {len(skipped)} ürün silinemedi (mevcut siparişleri var):\n'
+                + '\n'.join(f'• {name}' for name in skipped)
+            )
+        await reply_rich(update.message, text)
+    except Exception as e:
+        logger.error(f"admin_delete_category error: {e}")
+        conn.rollback()
+        await update.message.reply_text(f'❌ Hata: {str(e)}')
+    finally:
+        put_conn(conn)
+
 async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.message.from_user.id):
         await update.message.reply_text('❌ Yetkiniz yok!')
@@ -2235,92 +2330,4 @@ async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Yetkiyi kaldırmak için: /yetkikal {target_id}"
             )
         except Exception as e:
-            logger.error(f"cmd_yetki error: {e}")
-            conn.rollback()
-            await update.message.reply_text(f'❌ Hata: {str(e)}')
-        finally:
-            put_conn(conn)
-    except ValueError:
-        await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
-
-async def cmd_yetkikal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
-        return
-    if len(context.args) < 1:
-        await update.message.reply_text('📝 Kullanım: /yetkikal <user_id>')
-        return
-    try:
-        target_id = int(context.args[0])
-        conn = get_conn()
-        try:
-            c = conn.cursor()
-            c.execute('DELETE FROM admins WHERE admin_id = %s', (target_id,))
-            deleted = c.rowcount
-            conn.commit()
-            if deleted:
-                await reply_rich(update.message, f"✅ <b>{target_id}</b> ID'li kullanıcının yetkisi kaldırıldı!")
-            else:
-                await update.message.reply_text(f'⚠️ {target_id} zaten yetkili değil!')
-        except Exception as e:
-            logger.error(f"cmd_yetkikal error: {e}")
-            conn.rollback()
-            await update.message.reply_text(f'❌ Hata: {str(e)}')
-        finally:
-            put_conn(conn)
-    except ValueError:
-        await update.message.reply_text('❌ Geçersiz kullanıcı ID!')
-
-async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text('❌ Yetkiniz yok!')
-        return
-    conn = get_conn()
-    try:
-        c = conn.cursor(cursor_factory=RealDictCursor)
-        c.execute('SELECT * FROM admins ORDER BY added_date DESC')
-        admins = c.fetchall()
-    except Exception as e:
-        logger.error(f"cmd_yetkiler error: {e}")
-        admins = []
-    finally:
-        put_conn(conn)
-
-    if not admins:
-        await update.message.reply_text('📋 Henüz yetkili admin eklenmemiş.\n\nEklemek için: /yetki <user_id>')
-        return
-
-    text = '👥 <b>Yetkili Adminler</b>\n\n'
-    for a in admins:
-        text += f"🔹 <b>{a['admin_id']}</b> — {a['added_date']}\n"
-    text += f'\n🔸 <b>Ana Admin:</b> {ADMIN_ID}'
-    await reply_rich(update.message, text)
-
-
-# ===== MAIN =====
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CallbackQueryHandler(button_click))
-    app.add_handler(MessageHandler(
-        (filters.TEXT & ~filters.COMMAND) | filters.Regex(r'^/iptal$'),
-        handle_message
-    ))
-
-    app.add_handler(CommandHandler('urunekle', admin_add_product))
-    app.add_handler(CommandHandler('stokguncelle', admin_stock))
-    app.add_handler(CommandHandler('urunler', admin_products))
-    app.add_handler(CommandHandler('bakiyeartir', admin_give_points))
-    app.add_handler(CommandHandler('vipver', admin_set_vip))
-    app.add_handler(CommandHandler('istatistik', admin_stats))
-    app.add_handler(CommandHandler('siparisler', admin_orders))
-    app.add_handler(CommandHandler('yetki', cmd_yetki))
-    app.add_handler(CommandHandler('yetkikal', cmd_yetkikal))
-    app.add_handler(CommandHandler('yetkiler', cmd_yetkiler))
-
-    logger.info("Bot başlatılıyor...")
-    app.run_polling(drop_pending_updates=True)
-
-if __name__ == '__main__':
-    main()
+            
