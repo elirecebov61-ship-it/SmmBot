@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # (Bu yalnız botun bağlı olduğu hesabda Telegram Premium varsa düzgün animasiyalı görünür;
 #  premium olmayan istifadəçilər bunları normal placeholder emoji kimi görür, bu normaldır.)
 PREMIUM_EMOJI_MAP = {
+    '✅': '5377574606808835666',
     '❌': '6224185666704511761',
     '💎': '5251562950698759162',
     '👤': '4967667085606912536',
@@ -1111,9 +1112,9 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'language':
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton('Türkçe', callback_data='lang_tr', style='success',
-                                       icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🌍']),
+                                       icon_custom_emoji_id='5891175480488367676'),
                  InlineKeyboardButton('English', callback_data='lang_en', style='success',
-                                       icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🌍'])],
+                                       icon_custom_emoji_id='5202196682497859879')],
                 [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
             ])
             await safe_edit(query, get_text('lang_select', lang), keyboard)
