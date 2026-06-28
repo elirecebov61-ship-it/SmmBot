@@ -73,6 +73,38 @@ PREMIUM_EMOJI_MAP = {
 # çünki bunlar mövcud unicode emoji-ni əvəzləmir, yeni bir simvol kimi əlavə olunur)
 TELEGRAM_PRODUCT_EMOJI_ID = '5345965137863928359'
 TIKTOK_PRODUCT_EMOJI_ID = '5359640777590841912'
+WHATSAPP_PRODUCT_EMOJI_ID = '5935973359480213803'
+YOUTUBE_PRODUCT_EMOJI_ID = '5427158904729513162'
+INSTAGRAM_PRODUCT_EMOJI_ID = '5348533850429470257'
+
+# Tanınan kateqoriyaların standart (canonical) adı + premium icon-u.
+# Açar həmişə kiçik hərflə saxlanır ki, axtarış case-insensitive olsun.
+KNOWN_CATEGORIES = {
+    'tiktok': ('TikTok', TIKTOK_PRODUCT_EMOJI_ID),
+    'telegram': ('Telegram', TELEGRAM_PRODUCT_EMOJI_ID),
+    'instagram': ('Instagram', INSTAGRAM_PRODUCT_EMOJI_ID),
+    'whatsapp': ('WhatsApp', WHATSAPP_PRODUCT_EMOJI_ID),
+    'youtube': ('YouTube', YOUTUBE_PRODUCT_EMOJI_ID),
+}
+
+def normalize_category(category):
+    """İstifadəçinin yazdığı kateqoriya adını (hər hansı böyük/kiçik hərf yazılışı) standart formaya çevirir.
+    Tanınmayan kateqoriyalar olduğu kimi qalır (yalnız baş hərfi böyüdülür).
+    Türk dilindəki nöqtəli İ hərfi .lower()-da 'i̇' (i + birləşmiş nöqtə işarəsi) verdiyi üçün
+    bunu adi 'i'-yə çevirib axtarış aparırıq, əks halda 'İnstagram' tanınmaz."""
+    key = category.strip().lower().replace('i̇', 'i')
+    if key in KNOWN_CATEGORIES:
+        return KNOWN_CATEGORIES[key][0]
+    return category.strip()
+
+def get_category_icon(category):
+    """Kateqoriyaya uyğun premium emoji ID-sini qaytarır (case-insensitive).
+    Tanınan kateqoriyalar (TikTok, Telegram, Instagram, WhatsApp, YouTube) öz xüsusi
+    icon-larını alır, digər (yeni, naməlum) kateqoriyalar ümumi mağaza (🛍) icon-u istifadə edir."""
+    key = category.strip().lower().replace('i̇', 'i')
+    if key in KNOWN_CATEGORIES:
+        return KNOWN_CATEGORIES[key][1]
+    return PREMIUM_EMOJI_MAP.get('🛍', TIKTOK_PRODUCT_EMOJI_ID)
 # Tək kod nöqtəli emoji-ləri uzunluğa görə sıralayırıq (uzun olanlar əvvəl yoxlanmalı,
 # məsələn variation selector daxil olan emoji-lər səhv bölünməsin)
 _EMOJI_KEYS_SORTED = sorted(PREMIUM_EMOJI_MAP.keys(), key=len, reverse=True)
@@ -798,12 +830,34 @@ def get_products_by_category(category, vip_only=None):
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
         if vip_only is None:
-            c.execute('SELECT * FROM products WHERE category = %s', (category,))
+            c.execute('SELECT * FROM products WHERE category ILIKE %s', (category,))
         else:
-            c.execute('SELECT * FROM products WHERE category = %s AND vip_only = %s', (category, vip_only))
+            c.execute('SELECT * FROM products WHERE category ILIKE %s AND vip_only = %s', (category, vip_only))
         return c.fetchall()
     except Exception as e:
         logger.error(f"get_products_by_category error: {e}")
+        return []
+    finally:
+        put_conn(conn)
+
+def get_all_categories():
+    """Qeyri-VIP məhsulların mövcud olduğu bütün unikal kateqoriyaları gətirir (mağaza menyusu üçün).
+    Case-insensitive deduplication edilir ki, köhnə fərqli yazılışlı qeydlər (Instagram/instagram)
+    mağazada iki ayrı düymə kimi görünməsin."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT DISTINCT category FROM products WHERE vip_only = FALSE ORDER BY category')
+        raw_categories = [row[0] for row in c.fetchall()]
+        seen = {}
+        for cat in raw_categories:
+            display_name = normalize_category(cat)
+            key = display_name.lower()
+            if key not in seen:
+                seen[key] = display_name
+        return sorted(seen.values())
+    except Exception as e:
+        logger.error(f"get_all_categories error: {e}")
         return []
     finally:
         put_conn(conn)
@@ -1157,23 +1211,33 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ===== SHOP =====
         elif data == 'shop':
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(get_text('tiktok_smm', lang).replace('🎵 ', ''), callback_data='shop_tiktok',
-                                       style='success', icon_custom_emoji_id=TIKTOK_PRODUCT_EMOJI_ID),
-                 InlineKeyboardButton(get_text('telegram_smm', lang).replace('📱 ', ''), callback_data='shop_telegram',
-                                       style='success', icon_custom_emoji_id=TELEGRAM_PRODUCT_EMOJI_ID)],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
-            ])
-            await safe_edit(query, get_text('shop_welcome', lang), keyboard)
+            categories = get_all_categories()
+            if not categories:
+                text = get_text('category_empty', lang, category=('Mağaza' if lang == 'TR' else 'Shop'))
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+                    get_text('back_to_menu', lang), callback_data='main_menu', style='danger'
+                )]])
+                await safe_edit(query, text, keyboard)
+            else:
+                rows = []
+                for i in range(0, len(categories), 2):
+                    row = []
+                    for cat in categories[i:i + 2]:
+                        row.append(InlineKeyboardButton(
+                            cat, callback_data=f"shop_cat_{cat}",
+                            style='success', icon_custom_emoji_id=get_category_icon(cat)
+                        ))
+                    rows.append(row)
+                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')])
+                await safe_edit(query, get_text('shop_welcome', lang), InlineKeyboardMarkup(rows))
 
-        elif data in ('shop_tiktok', 'shop_telegram'):
-            category = 'TikTok' if data == 'shop_tiktok' else 'Telegram'
+        elif data.startswith('shop_cat_'):
+            category = data[len('shop_cat_'):]
             products = get_products_by_category(category, vip_only=False)
-            cat_icon = TIKTOK_PRODUCT_EMOJI_ID if category == 'TikTok' else TELEGRAM_PRODUCT_EMOJI_ID
+            cat_icon = get_category_icon(category)
 
             if not products:
-                cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
-                text = get_text('category_empty', lang, category=cat_label)
+                text = get_text('category_empty', lang, category=category)
                 keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
                     get_text('back_to_menu', lang), callback_data='shop', style='danger'
                 )]])
@@ -1397,12 +1461,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             stock_text = 'Sınırsız' if product['stock'] >= 999999 else str(product['stock'])
 
-            if product['category'] == 'TikTok':
-                back_cb = 'shop_tiktok'
-            elif product['category'] == 'Telegram':
-                back_cb = 'shop_telegram'
-            else:
-                back_cb = 'shop'
+            back_cb = f"shop_cat_{product['category']}"
 
             text = (
                 f"<b>{product['name']}</b>\n\n"
@@ -1956,7 +2015,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             vip_only = True
             args = args[:-1]
         name = ' '.join(args[:-3]).strip('"')
-        category = args[-3]
+        category = normalize_category(args[-3])
         price = int(args[-2])
         stock = int(args[-1])
         conn = get_conn()
@@ -2265,4 +2324,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
