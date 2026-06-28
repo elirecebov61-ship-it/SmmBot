@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 #  premium olmayan istifadəçilər bunları normal placeholder emoji kimi görür, bu normaldır.)
 PREMIUM_EMOJI_MAP = {
     '✅': '5377574606808835666',
+    '➕': '5397916757333654639',
     '❌': '6224185666704511761',
     '💎': '5251562950698759162',
     '👤': '4967667085606912536',
@@ -915,19 +916,41 @@ async def send_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     random.shuffle(options)
 
     text = (
-        "🗓 <b>Güvenlik Doğrulaması</b> 🗓\n\n"
+        "📆 <b>Güvenlik Doğrulaması</b> 📆\n\n"
         "⁉️ Soruyu çözün ⁉️\n\n"
         f"<b>{a}</b> + <b>{b}</b> = ?\n\n"
         "➕ Doğru cevabı seçin: ➕"
     )
     btns = [InlineKeyboardButton(str(opt), callback_data=f'captcha_{opt}', style='primary') for opt in options]
-    rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
+    rows = [[b] for b in btns]  # hər düymə öz sırasında - 1 1 1 1 düzümü, 2 2 yox
     keyboard = InlineKeyboardMarkup(rows)
 
+    # Bu mesajdaki "📆" (Güvenlik Doğrulaması başlığında) ümumi map-dakı 📆 ID-sindən fərqli,
+    # xüsusi bir ID istəyir. Render etdikdən sonra hər iki 📆 instansını yeni ID-yə dəyişirik.
+    plain_text, entities = render_with_premium_emoji(text)
+    default_calendar_id = PREMIUM_EMOJI_MAP['📆']
+    for idx, ent in enumerate(entities):
+        if ent.type == MessageEntity.CUSTOM_EMOJI and ent.custom_emoji_id == default_calendar_id:
+            entities[idx] = MessageEntity(
+                type=MessageEntity.CUSTOM_EMOJI,
+                offset=ent.offset,
+                length=ent.length,
+                custom_emoji_id='5030732809128379408'
+            )
+
     if update.message:
-        await reply_rich(update.message, text, keyboard)
+        try:
+            await update.message.reply_text(plain_text, entities=entities, reply_markup=keyboard)
+        except Exception as e:
+            logger.error(f"send_captcha reply error: {e}")
     elif update.callback_query:
-        await edit_rich(update.callback_query, text, keyboard)
+        try:
+            await update.callback_query.edit_message_text(plain_text, entities=entities, reply_markup=keyboard)
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"send_captcha edit error: {e}")
+        except Exception as e:
+            logger.error(f"send_captcha edit unexpected error: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
