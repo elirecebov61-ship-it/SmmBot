@@ -201,7 +201,7 @@ except Exception as e:
 # ===== LANGUAGE =====
 LANG = {
     'TR': {
-        'welcome': '☀️ Merhaba\n\n👾 <b>Eren SMM TR</b>\nTürkiye\'nin güvenilir dijital ürün marketi.\n\nİşlem seçin:',
+        'welcome': '☀️ Merhaba\n\n👾 <b>Eren SMM TR</b>\n<i>Türkiye\'nin güvenilir dijital ürün marketi.</i>\n\nİşlem seçin:',
         'balance': '💎 Bakiye',
         'profile': '👤 Profilim',
         'shop': '🛍️ Mağaza',
@@ -371,7 +371,7 @@ LANG = {
         'lang_select': 'Lütfen dil tercihinizi yapın / Please select your language:',
     },
     'EN': {
-        'welcome': '☀️ Hello\n\n👾 <b>Eren SMM TR</b>\nTurkey\'s trusted digital product marketplace.\n\nSelect an operation:',
+        'welcome': '☀️ Hello\n\n👾 <b>Eren SMM TR</b>\n<i>Turkey\'s trusted digital product marketplace.</i>\n\nSelect an operation:',
         'balance': '💎 Balance',
         'profile': '👤 Profile',
         'shop': '🛍️ Shop',
@@ -881,7 +881,7 @@ def main_menu_keyboard(user):
 
 def back_to_menu_markup(lang):
     return InlineKeyboardMarkup([[InlineKeyboardButton(
-        get_text('back_to_menu', lang), callback_data='main_menu', style='primary'
+        get_text('back_to_menu', lang), callback_data='main_menu', style='danger'
     )]])
 
 def is_valid_url(url):
@@ -1055,7 +1055,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton(get_text('daily_bonus', lang).replace('🎁 ', ''), callback_data='daily_bonus',
                                        style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['💎'])],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
             ])
             await safe_edit(query, text, keyboard)
 
@@ -1114,7 +1114,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🌍']),
                  InlineKeyboardButton('English', callback_data='lang_en', style='success',
                                        icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🌍'])],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
             ])
             await safe_edit(query, get_text('lang_select', lang), keyboard)
 
@@ -1138,7 +1138,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        style='danger', icon_custom_emoji_id=TIKTOK_PRODUCT_EMOJI_ID),
                  InlineKeyboardButton(get_text('telegram_smm', lang).replace('📱 ', ''), callback_data='shop_telegram',
                                        style='danger', icon_custom_emoji_id=TELEGRAM_PRODUCT_EMOJI_ID)],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
             ])
             await safe_edit(query, get_text('shop_welcome', lang), keyboard)
 
@@ -1151,12 +1151,15 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
                 text = get_text('category_empty', lang, category=cat_label)
                 keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
-                    get_text('back_to_menu', lang), callback_data='shop', style='primary'
+                    get_text('back_to_menu', lang), callback_data='shop', style='danger'
                 )]])
                 await safe_edit(query, text, keyboard)
             else:
                 cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
-                text = f"🛍️ <b>{cat_label}</b>\n\nBir ürün seçin:\n"
+                listing_title = 'Ürünler Listeleniyor' if lang == 'TR' else 'Products Listed'
+                listing_prompt = ('Satın almak istediğiniz ürünü seçin:' if lang == 'TR'
+                                   else 'Select the product you want to buy:')
+                text = f"🛍️ <b>{cat_label}</b>\n\n👍 <b>{listing_title}</b>\n\n{listing_prompt}\n"
                 rows = []
                 for p in products:
                     stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
@@ -1165,8 +1168,27 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         p['name'], callback_data=f"buy_{p['product_id']}",
                         style='success', icon_custom_emoji_id=cat_icon
                     )])
-                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop', style='primary')])
-                await safe_edit(query, text, InlineKeyboardMarkup(rows))
+                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop', style='danger')])
+                # "👍" emojisi bu mesajda fərqli premium ID istəyir. Mətndə yalnız bir dəfə keçdiyi üçün,
+                # render olunmuş entity siyahısında onun custom_emoji_id-sini (ümumi map-dakı dəyər) tapıb dəyişirik.
+                plain_text, entities = render_with_premium_emoji(text)
+                default_thumbsup_id = PREMIUM_EMOJI_MAP['👍']
+                for idx, ent in enumerate(entities):
+                    if ent.type == MessageEntity.CUSTOM_EMOJI and ent.custom_emoji_id == default_thumbsup_id:
+                        entities[idx] = MessageEntity(
+                            type=MessageEntity.CUSTOM_EMOJI,
+                            offset=ent.offset,
+                            length=ent.length,
+                            custom_emoji_id='6266995104687330978'
+                        )
+                        break
+                try:
+                    await query.edit_message_text(plain_text, entities=entities, reply_markup=InlineKeyboardMarkup(rows))
+                except BadRequest as e:
+                    if "Message is not modified" not in str(e):
+                        logger.error(f"shop listing edit error: {e}")
+                except Exception as e:
+                    logger.error(f"shop listing edit unexpected error: {e}")
 
         # ===== VIP SHOP =====
         elif data == 'vip_shop':
@@ -1189,7 +1211,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         p['name'], callback_data=f"buy_{p['product_id']}",
                         style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['👑']
                     )])
-                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')])
+                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
         # ===== VIP PURCHASE =====
@@ -1290,7 +1312,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  InlineKeyboardButton('50', callback_data='donate_50', style='primary', icon_custom_emoji_id=star_icon)],
                 [InlineKeyboardButton('75', callback_data='donate_75', style='primary', icon_custom_emoji_id=star_icon),
                  InlineKeyboardButton('100', callback_data='donate_100', style='primary', icon_custom_emoji_id=star_icon)],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
             ]
             await safe_edit(query, get_text('donate_text', lang), InlineKeyboardMarkup(buttons))
 
