@@ -48,7 +48,7 @@ PREMIUM_EMOJI_MAP = {
     '🌎': '5397575638146110953',
     '🌏': '5397575638146110953',
     '🎲': '6071123877067494706',
-    '⭐': '5267102644886853973',
+    '⭐': '6221736233970700254',
     '🌞': '5402477260982731644',
     '👾': '5305444432118589379',
     '☀': '5402477260982731644',
@@ -201,7 +201,7 @@ except Exception as e:
 # ===== LANGUAGE =====
 LANG = {
     'TR': {
-        'welcome': '☀️ Merhaba\n\n👾 <b>Eren SMM TR</b>\n<i>Türkiye\'nin güvenilir dijital ürün marketi.</i>\n\nİşlem seçin:',
+        'welcome': '☀️ Merhaba\n\n👾 <b>Wextyro SMM TR</b>\n<i>Türkiye\'nin güvenilir dijital ürün marketi.</i>\n\nİşlem seçin:',
         'balance': '💎 Bakiye',
         'profile': '👤 Profilim',
         'shop': '🛍️ Mağaza',
@@ -323,7 +323,7 @@ LANG = {
 
         'donate_text': (
             '⭐️ <b>Bağış Yap</b>\n\n'
-            'Eren SMM TR olarak sizlere her zaman daha iyi, daha hızlı, daha uzun süre ve daha uygun fiyata hizmet verebilmek için büyük emek harcıyoruz.\n\n'
+            'Wextyro SMM TR olarak sizlere her zaman daha iyi, daha hızlı, daha uzun süre ve daha uygun fiyata hizmet verebilmek için büyük emek harcıyoruz.\n\n'
             'Eğer hizmetlerimizden memnun kaldıysanız, bize bir yıldız <b>bağışı</b> yaparak destek olabilirsiniz. Her katkı bizim için çok değerlidir. Sağ olun, var olun! 🙏\n\n'
             'Kaç yıldız <b>bağış</b> yapmak istersiniz?'
         ),
@@ -371,7 +371,7 @@ LANG = {
         'lang_select': 'Lütfen dil tercihinizi yapın / Please select your language:',
     },
     'EN': {
-        'welcome': '☀️ Hello\n\n👾 <b>Eren SMM TR</b>\n<i>Turkey\'s trusted digital product marketplace.</i>\n\nSelect an operation:',
+        'welcome': '☀️ Hello\n\n👾 <b>Wextyro SMM TR</b>\n<i>Turkey\'s trusted digital product marketplace.</i>\n\nSelect an operation:',
         'balance': '💎 Balance',
         'profile': '👤 Profile',
         'shop': '🛍️ Shop',
@@ -493,7 +493,7 @@ LANG = {
 
         'donate_text': (
             '⭐️ <b>Donate</b>\n\n'
-            'As Eren SMM TR, we work hard to always provide you better, faster, longer-lasting and more affordable service.\n\n'
+            'As Wextyro SMM TR, we work hard to always provide you better, faster, longer-lasting and more affordable service.\n\n'
             'If you are happy with our services, you can support us with a star <b>donation</b>. Every contribution means a lot to us. Thank you! 🙏\n\n'
             'How many stars would you like to <b>donate</b>?'
         ),
@@ -1135,9 +1135,9 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'shop':
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton(get_text('tiktok_smm', lang).replace('🎵 ', ''), callback_data='shop_tiktok',
-                                       style='danger', icon_custom_emoji_id=TIKTOK_PRODUCT_EMOJI_ID),
+                                       style='success', icon_custom_emoji_id=TIKTOK_PRODUCT_EMOJI_ID),
                  InlineKeyboardButton(get_text('telegram_smm', lang).replace('📱 ', ''), callback_data='shop_telegram',
-                                       style='danger', icon_custom_emoji_id=TELEGRAM_PRODUCT_EMOJI_ID)],
+                                       style='success', icon_custom_emoji_id=TELEGRAM_PRODUCT_EMOJI_ID)],
                 [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
             ])
             await safe_edit(query, get_text('shop_welcome', lang), keyboard)
@@ -1155,15 +1155,12 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )]])
                 await safe_edit(query, text, keyboard)
             else:
-                cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
                 listing_title = 'Ürünler Listeleniyor' if lang == 'TR' else 'Products Listed'
                 listing_prompt = ('Satın almak istediğiniz ürünü seçin:' if lang == 'TR'
                                    else 'Select the product you want to buy:')
-                text = f"🛍️ <b>{cat_label}</b>\n\n👍 <b>{listing_title}</b>\n\n{listing_prompt}\n"
+                text = f"👍 <b>{listing_title}</b>\n\n{listing_prompt}"
                 rows = []
                 for p in products:
-                    stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
-                    text += f"\n<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n"
                     rows.append([InlineKeyboardButton(
                         p['name'], callback_data=f"buy_{p['product_id']}",
                         style='success', icon_custom_emoji_id=cat_icon
@@ -1298,20 +1295,20 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ===== DONATE =====
         elif data == 'donate':
-            star_icon = PREMIUM_EMOJI_MAP['⭐']
+            star_icon = '6221736233970700254'
             buttons = [
-                [InlineKeyboardButton('5', callback_data='donate_5', style='primary', icon_custom_emoji_id=star_icon),
-                 InlineKeyboardButton('10', callback_data='donate_10', style='primary', icon_custom_emoji_id=star_icon)],
-                [InlineKeyboardButton('15', callback_data='donate_15', style='primary', icon_custom_emoji_id=star_icon),
-                 InlineKeyboardButton('20', callback_data='donate_20', style='primary', icon_custom_emoji_id=star_icon)],
-                [InlineKeyboardButton('25', callback_data='donate_25', style='primary', icon_custom_emoji_id=star_icon),
-                 InlineKeyboardButton('30', callback_data='donate_30', style='primary', icon_custom_emoji_id=star_icon)],
-                [InlineKeyboardButton('35', callback_data='donate_35', style='primary', icon_custom_emoji_id=star_icon),
-                 InlineKeyboardButton('40', callback_data='donate_40', style='primary', icon_custom_emoji_id=star_icon)],
-                [InlineKeyboardButton('45', callback_data='donate_45', style='primary', icon_custom_emoji_id=star_icon),
-                 InlineKeyboardButton('50', callback_data='donate_50', style='primary', icon_custom_emoji_id=star_icon)],
-                [InlineKeyboardButton('75', callback_data='donate_75', style='primary', icon_custom_emoji_id=star_icon),
-                 InlineKeyboardButton('100', callback_data='donate_100', style='primary', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('5 Yıldız Bağış', callback_data='donate_5', style='success', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('10 Yıldız Bağış', callback_data='donate_10', style='success', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('15 Yıldız Bağış', callback_data='donate_15', style='success', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('20 Yıldız Bağış', callback_data='donate_20', style='success', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('25 Yıldız Bağış', callback_data='donate_25', style='success', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('30 Yıldız Bağış', callback_data='donate_30', style='success', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('35 Yıldız Bağış', callback_data='donate_35', style='success', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('40 Yıldız Bağış', callback_data='donate_40', style='success', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('45 Yıldız Bağış', callback_data='donate_45', style='success', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('50 Yıldız Bağış', callback_data='donate_50', style='success', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('75 Yıldız Bağış', callback_data='donate_75', style='success', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('100 Yıldız Bağış', callback_data='donate_100', style='success', icon_custom_emoji_id=star_icon)],
                 [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='danger')]
             ]
             await safe_edit(query, get_text('donate_text', lang), InlineKeyboardMarkup(buttons))
@@ -1321,7 +1318,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_invoice(
                     chat_id=user_id,
-                    title=f'Eren SMM - {stars} Yıldız Bağış',
+                    title=f'Wextyro SMM - {stars} Yıldız Bağış',
                     description=f'{stars} yıldız bağışı yapın',
                     payload=f'donate_{stars}_{user_id}',
                     provider_token='',
