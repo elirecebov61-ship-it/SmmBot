@@ -8,7 +8,8 @@ from psycopg2.extras import RealDictCursor
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.error import BadRequest
-from datetime import datetime
+from telegram.constants import ParseMode
+from datetime import datetime, timedelta
 
 # ===== CONFIGURATION =====
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
@@ -19,20 +20,25 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/e
 BOT_USERNAME = os.getenv("BOT_USERNAME", "WextyroMarketBot")
 VIP_REFERRAL_REQUIREMENT = int(os.getenv("VIP_REFERRAL_REQUIREMENT", "20"))
 
+# Logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ===== PREMIUM EMOJI MAP (GENİŞLƏDİLMİŞ) =====
+# ===== PREMIUM EMOJI MAP =====
+# Hər unicode emoji -> sənin premium custom emoji ID-n.
+# Mesaj göndərilərkən mətndəki bu emoji-lər avtomatik custom_emoji entity-yə çevrilir.
+# (Bu yalnız botun bağlı olduğu hesabda Telegram Premium varsa düzgün animasiyalı görünür;
+#  premium olmayan istifadəçilər bunları normal placeholder emoji kimi görür, bu normaldır.)
 PREMIUM_EMOJI_MAP = {
-    # Köhnə emojilər
     '❌': '6224185666704511761',
     '💎': '5251562950698759162',
     '👤': '4967667085606912536',
     '🛍': '4970023558068568720',
     '👑': '6266995104687330978',
+    '👍': '6224185666704511761',  # Günlük bonusdaki "alınmaz" emoji - ❌ ilə eyni custom emoji
     '📦': '5449683594425410231',
     '💰': '5375338737028841420',
     '🤝': '6071278787947925866',
@@ -45,8 +51,7 @@ PREMIUM_EMOJI_MAP = {
     '⭐': '5267102644886853973',
     '🌞': '5402477260982731644',
     '👾': '5305444432118589379',
-    # Yeni emojilər
-    '☀️': '5402477260982731644',
+    '☀': '5402477260982731644',
     '💡': '5472146462362048818',
     '💼': '5249273776079640466',
     '📆': '5274055917766202507',
@@ -56,16 +61,18 @@ PREMIUM_EMOJI_MAP = {
     '🟡': '5208447513475954676',
     '🔴': '5411225014148014586',
     '🔗': '5271604874419647061',
-    '⚠️': '5447644880824181073',
+    '⚠': '5447644880824181073',
     '👇': '5231102735817918643',
     '📋': '5197269100878907942',
-    '⁉️': '5314504236132747481',
+    '⁉': '5314504236132747481',
     '📖': '5226512880362332956',
-    # Kategori emojiləri
-    '📱': '5345965137863928359',
-    '🎵': '5359640777590841912',
 }
-
+# Telegram ürünleri ve TikTok ürünleri üçün xüsusi emoji-lər (mətndə manuel yazılacaq, map-da deyil,
+# çünki bunlar mövcud unicode emoji-ni əvəzləmir, yeni bir simvol kimi əlavə olunur)
+TELEGRAM_PRODUCT_EMOJI_ID = '5345965137863928359'
+TIKTOK_PRODUCT_EMOJI_ID = '5359640777590841912'
+# Tək kod nöqtəli emoji-ləri uzunluğa görə sıralayırıq (uzun olanlar əvvəl yoxlanmalı,
+# məsələn variation selector daxil olan emoji-lər səhv bölünməsin)
 _EMOJI_KEYS_SORTED = sorted(PREMIUM_EMOJI_MAP.keys(), key=len, reverse=True)
 
 # ===== DATABASE CONNECTION POOL =====
@@ -81,6 +88,7 @@ def init_db():
     conn = get_conn()
     try:
         c = conn.cursor()
+
         c.execute('''CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
             username TEXT,
@@ -97,6 +105,7 @@ def init_db():
             captcha_answer INTEGER,
             pending_referrer BIGINT
         )''')
+
         c.execute('''CREATE TABLE IF NOT EXISTS products (
             product_id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -106,6 +115,7 @@ def init_db():
             vip_only BOOLEAN DEFAULT FALSE,
             description TEXT
         )''')
+
         c.execute('''CREATE TABLE IF NOT EXISTS orders (
             order_id SERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL REFERENCES users(user_id),
@@ -116,6 +126,7 @@ def init_db():
             profile_link TEXT,
             log_message_id BIGINT
         )''')
+
         c.execute('''CREATE TABLE IF NOT EXISTS transfers (
             transfer_id SERIAL PRIMARY KEY,
             sender_id BIGINT NOT NULL REFERENCES users(user_id),
@@ -124,33 +135,41 @@ def init_db():
             transfer_date TEXT,
             status TEXT DEFAULT 'Başarılı'
         )''')
+
         c.execute('''CREATE TABLE IF NOT EXISTS referrals (
             referral_id SERIAL PRIMARY KEY,
             referrer_id BIGINT NOT NULL REFERENCES users(user_id),
             referred_user_id BIGINT NOT NULL REFERENCES users(user_id),
             referral_date TEXT
         )''')
-        c.execute('''CREATE TABLE IF NOT EXISTS admins (
-            admin_id BIGINT PRIMARY KEY,
-            added_by BIGINT,
-            added_date TEXT
-        )''')
+
         try:
             c.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS log_message_id BIGINT")
         except Exception:
             pass
+
         try:
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE")
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS captcha_answer INTEGER")
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_referrer BIGINT")
         except Exception:
             pass
+
+        c.execute('''CREATE TABLE IF NOT EXISTS admins (
+            admin_id BIGINT PRIMARY KEY,
+            added_by BIGINT,
+            added_date TEXT
+        )''')
+
         c.execute('CREATE INDEX IF NOT EXISTS idx_users_id ON users(user_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_transfers_sender ON transfers(sender_id)')
+
         conn.commit()
         c.close()
+
         _seed_products(conn)
+
         logger.info("Database başlatıldı")
     finally:
         put_conn(conn)
@@ -198,6 +217,7 @@ LANG = {
         'raffle': '🎲 Çekiliş',
         'donate': '⭐️ Bağış Yap',
         'back_to_menu': '← Ana Merkeze Dön',
+
         'profile_text': (
             '👤 <b>Profil Özeti</b>\n\n'
             '🆔 <b>Kullanıcı ID:</b> {user_id}\n'
@@ -207,6 +227,7 @@ LANG = {
             '📆 <b>Kayıt Tarihi:</b> {reg_date}\n\n'
             '💡 VIP olarak: 2x Günlük Bonus, +2 Davet Puanı, VIP Mağazaya erişim!'
         ),
+
         'daily_bonus_success': (
             '🎁 <b>Günlük Bonus Alındı!</b>\n\n'
             '➕ +1 Puan hesabınıza eklendi!\n'
@@ -220,7 +241,9 @@ LANG = {
             '👑 VIP olarak bugün {used}/2 bonus hakkını kullandın!'
         ),
         'daily_bonus_used': '⏳ Bugünkü bonus hakkını kullandın!\nYarın tekrar gel!',
+
         'insufficient_balance': '❌ Yetersiz Bakiye!\nGerekli: {needed} Puan\nBakiyeniz: {balance} Puan',
+
         'transfer_info': (
             '💰 <b>Puan Transfer Sistemi</b>\n\n'
             '💎 <b>Bakiyeniz:</b> {balance} Puan\n'
@@ -242,21 +265,24 @@ LANG = {
         'transfer_format_error': '❌ Hatalı format!\nDoğru format: AlıcıID|Miktar\nÖrn: 1234567|10',
         'transfer_success': '✅ Transfer Başarılı!\n\n📤 {amount} Puan gönderdiniz\n👤 Alıcı: {receiver_id}\n💸 Komisyon: 1 Puan\n💎 Yeni Bakiye: {new_balance} Puan',
         'transfer_limit_reached': '⏳ Günlük transfer hakkınız bitti!\n\nGünde en fazla 2 transfer yapabilirsiniz. Yarın tekrar deneyin.',
+
         'shop_welcome': '👋 <b>Normal Mağazaya Hoşgeldiniz!</b>\n\nBir kategori seçin:',
         'tiktok_smm': '🎵 TikTok Smm',
         'telegram_smm': '📱 Telegram Smm',
         'category_empty': '📦 {category}\n\nBu kategoride henüz ürün bulunmuyor.\nYakında eklenecek!',
+
         'vip_shop_welcome': '👑 <b>VIP Mağazaya Hoşgeldiniz!</b>\n\nÖzel VIP ürünleri:',
         'vip_required_alert': '👑 Lütfen önce VIP olun!\nVIP mağazaya erişmek için VIP üyeliğiniz gerekiyor.',
+
         'vip_purchase_text': (
-            '👑 <b>VIP Satın Al</b>\n\n'
+            '👍 <b>VIP Satın Al</b>\n\n'
             'VIP olmak için <b>{required} referans</b> şart!\n\n'
-            '🤝 Mevcut referansınız: <b>{current}/{required}</b>\n'
-            '👇 Eksik referans: <b>{missing} kişi</b> daha davet edin!\n\n'
-            '• 💎 <b>VIP Avantajları:</b>\n'
-            '• 👑 VIP Mağazaya erişim\n'
-            '• 🎁 Günde 2 kez günlük bonus\n'
-            '• 🤝 Her davette <b>+2 Puan</b>'
+            '👍 Mevcut referansınız: <b>{current}/{required}</b>\n'
+            '👍 Eksik referans: <b>{missing} kişi</b> daha davet edin!\n\n'
+            '• 👍 <b>VIP Avantajları:</b>\n'
+            '• 👍 VIP Mağazaya erişim\n'
+            '• 👍 Günde 2 kez günlük bonus\n'
+            '• 👍 Her davette <b>+2 Puan</b>'
         ),
         'vip_already': (
             '👑 <b>Zaten VIP üyesiniz!</b>\n\n'
@@ -270,13 +296,16 @@ LANG = {
             '🎁 Günde 2 kez günlük bonus alabilirsiniz\n'
             '🤝 Her davette +2 Puan kazanacaksınız'
         ),
+
         'no_orders': '📦 <b>Sipariş Geçmişiniz</b>\n\nHenüz hiç siparişiniz bulunmuyor.',
+
         'referral_link': (
             '🤝 <b>Davet Et, Kazan!</b>\n\n'
             '👇 Aşağıdaki kişisel linkinizle arkadaşlarınızı sisteme davet edin, her yeni katılımda anında <b>+1 Puan</b> kazanın.\n\n'
             '📋 <b>Sizin Linkiniz:</b>\n'
             'https://t.me/{bot_username}?start={user_id}'
         ),
+
         'support_text': (
             '💬 <b>Destek Merkezi</b>\n\n'
             '⚠️ <b>Lütfen admini boş yere rahatsız etmeyiniz.</b>\n'
@@ -289,7 +318,9 @@ LANG = {
         ),
         'support_cancelled': '❌ İptal edildi.',
         'support_sent': '✅ Mesajınız iletildi. Yakında sizinle iletişime geçeceğiz.',
+
         'no_active_raffle': '🎲 <b>Çekiliş</b>\n\n⚠️ Şu anda aktif bir çekiliş bulunmuyor.\n\n<i>Yeni çekilişler için takipte kalın!</i>',
+
         'donate_text': (
             '⭐️ <b>Bağış Yap</b>\n\n'
             'Eren SMM TR olarak sizlere her zaman daha iyi, daha hızlı, daha uzun süre ve daha uygun fiyata hizmet verebilmek için büyük emek harcıyoruz.\n\n'
@@ -297,31 +328,44 @@ LANG = {
             'Kaç yıldız <b>bağış</b> yapmak istersiniz?'
         ),
         'donate_invoice_sent': '⭐️ {stars} yıldızlık bağış faturası size özelden gönderildi. Lütfen ödemeyi tamamlayın.',
+
         'help_text': (
             '📖 <b>YARDIM MERKEZİ</b> 📖\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '🛍 Mağaza Nedir ⁉️\n'
-            'Botun ana satış alanıdır. Kategoriler halinde düzenlenmiş ürünleri buradan satın alabilirsiniz.\n\n'
+            'Botun ana satış alanıdır. Kategoriler halinde düzenlenmiş ürünleri buradan satın alabilirsiniz. Bir ürüne tıklayınca fiyat ve stok bilgisi çıkar, satın al butonuna basınca puan düşülür ve siparişiniz oluşur.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '👑 VIP Mağaza ve Üyelik ⁉️\n'
             'VIP mağaza yalnızca VIP üyelere özel ürünler içerir. 20 referans getirerek VIP olabilirsiniz.\n'
-            'VIP avantajları: 👑 VIP Mağaza • 🎁 2x bonus • 🤝 +2 Puan/davet\n\n'
+            'VIP avantajları: 👑 VIP Mağaza erişimi • 🎁 Günde 2x bonus • 🤝 Davette +2 Puan\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '💎 Puan Nasıl Kazanılır ⁉️\n'
-            '• 🤝 Davet linkinizle arkadaş getirince +1 Puan (VIP: +2)\n'
-            '• 🎁 Her gün günlük bonus: +1 Puan (VIP: 2x)\n'
-            '• 💡 Admin tarafından manuel puan yüklenmesiyle\n\n'
+            '• Davet linkinizle arkadaş getirince +1 Puan (VIP: +2 Puan)\n'
+            '• Her gün günlük bonus: +1 Puan (VIP: günde 2 kez)\n'
+            '• Admin tarafından manuel puan yüklenmesiyle\n'
+            '• Promosyon kodu kullanarak\n\n'
             '━━━━━━━━━━━━━━━━━\n'
-            '📦 Sipariş Takibi ⁉️\n'
+            '📦 Sipariş Takibi Nasıl Çalışır ⁉️\n'
+            'Satın aldığınız her ürün için otomatik bir Sipariş ID oluşturulur.\n'
+            'Sipariş verdikten sonra bot sizden profil linkinizi isteyecektir.\n\n'
+            'Sipariş durumları:\n'
             '🟡 Beklemede — Onay bekleniyor\n'
             '🟢 Tamamlandı — Teslim edildi\n'
             '🔴 Reddedildi — İptal edildi\n\n'
+            '━━━━━━━━━━━━━━━━━\n'
+            '🎫 Promosyon Kodu Nedir? ⁉️\n'
+            'Yönetici tarafından oluşturulan özel kodlardır.\n\n'
+            '━━━━━━━━━━━━━━━━━\n'
+            '🤝 Davet Et Kazan Nedir ⁉️\n'
+            'Size özel davet linkinizi paylaşın. Her katılan kişi için otomatik +1 Puan kazanırsınız.\n'
+            '20 kişiyi davet ederek VIP üye olabilirsiniz.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '💰 Puan Transfer ⁉️\n'
             'Günde 2 transfer hakkınız vardır. Her transferde 1 Puan komisyon kesilir.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '⁉️ Destek İçin: <b>Destek</b> butonu üzerinden ulaşabilirsiniz ⁉️'
         ),
+
         'coupon_maintenance': '🔧 Kupon Sistemi Tamirde',
         'generic_error': '⚠️ Bir şeyler ters gitti, lütfen tekrar deneyin.',
         'lang_select': 'Lütfen dil tercihinizi yapın / Please select your language:',
@@ -343,6 +387,7 @@ LANG = {
         'raffle': '🎲 Raffle',
         'donate': '⭐️ Donate',
         'back_to_menu': '← Back to Menu',
+
         'profile_text': (
             '👤 <b>Profile Summary</b>\n\n'
             '🆔 <b>User ID:</b> {user_id}\n'
@@ -350,27 +395,31 @@ LANG = {
             '🤝 <b>Referred:</b> {referrals} People\n'
             '💼 <b>Total Orders:</b> {orders}\n'
             '📆 <b>Registration Date:</b> {reg_date}\n\n'
-            '💡 As VIP: 2x Daily Bonus, +2 Referral Points, VIP Shop access!'
+            '💡 As VIP: 2x Daily Bonus, +2 Referral Points, access to VIP Shop!'
         ),
+
         'daily_bonus_success': (
             '🎁 <b>Daily Bonus Claimed!</b>\n\n'
-            '➕ +1 Point added!\n'
+            '➕ +1 Point added to your account!\n'
             '💎 New Balance: {balance} Points\n\n'
-            '👍 All bonus rights used for today!'
+            '👍 You\'ve used all your bonus rights for today!'
         ),
         'daily_bonus_success_vip': (
             '🎁 <b>Daily Bonus Claimed!</b>\n\n'
-            '➕ +1 Point added!\n'
+            '➕ +1 Point added to your account!\n'
             '💎 New Balance: {balance} Points\n\n'
             '👑 As VIP you\'ve used {used}/2 bonuses today!'
         ),
         'daily_bonus_used': '⏳ You\'ve used today\'s bonus!\nCome back tomorrow!',
+
         'insufficient_balance': '❌ Insufficient Balance!\nRequired: {needed} Points\nYour Balance: {balance} Points',
+
         'transfer_info': (
             '💰 <b>Points Transfer System</b>\n\n'
             '💎 <b>Your Balance:</b> {balance} Points\n'
             '⏳ <b>Daily Limit:</b> {daily_left}/2 left\n\n'
-            '1️⃣ The bot deducts <b>1 Point</b> per transfer.\n\n'
+            '1️⃣ The bot deducts <b>1 Point</b> commission per transfer.\n'
+            '👤 Enter recipient ID and amount to transfer.\n\n'
             'Format: RecipientID|Amount\n'
             'E.g.: 1234567|10'
         ),
@@ -378,104 +427,130 @@ LANG = {
             '💰 <b>Enter Transfer Info</b>\n\n'
             'Format: RecipientID|Amount\n'
             'E.g.: 1234567|10\n\n'
-            '⚠️ Bot deducts <b>1 Point</b> commission.\n'
+            '⚠️ The bot deducts <b>1 Point</b> commission.\n'
             '💎 <b>Your Balance:</b> {balance} Points\n\n'
             'Cancel: /iptal'
         ),
         'transfer_cancelled': '⚠️ Transfer cancelled.',
         'transfer_format_error': '❌ Invalid format!\nCorrect format: RecipientID|Amount\nE.g.: 1234567|10',
         'transfer_success': '✅ Transfer Successful!\n\n📤 You sent {amount} Points\n👤 Recipient: {receiver_id}\n💸 Commission: 1 Point\n💎 New Balance: {new_balance} Points',
-        'transfer_limit_reached': '⏳ Daily transfer limit reached!\n\nMax 2 transfers per day. Try again tomorrow.',
+        'transfer_limit_reached': '⏳ Your daily transfer limit is reached!\n\nYou can make at most 2 transfers per day. Try again tomorrow.',
+
         'shop_welcome': '👋 <b>Welcome to the Shop!</b>\n\nSelect a category:',
         'tiktok_smm': '🎵 TikTok SMM',
         'telegram_smm': '📱 Telegram SMM',
         'category_empty': '📦 {category}\n\nNo products in this category yet.\nComing soon!',
-        'vip_shop_welcome': '👑 <b>Welcome to VIP Shop!</b>\n\nExclusive VIP products:',
-        'vip_required_alert': '👑 Please become VIP first!\nVIP membership is required.',
+
+        'vip_shop_welcome': '👑 <b>Welcome to the VIP Shop!</b>\n\nExclusive VIP products:',
+        'vip_required_alert': '👑 Please become VIP first!\nVIP membership is required to access the VIP shop.',
+
         'vip_purchase_text': (
-            '👑 <b>Get VIP</b>\n\n'
-            '{required} referrals required!\n\n'
-            '🤝 Your referrals: <b>{current}/{required}</b>\n'
-            '👇 Missing: <b>{missing} more people</b>\n\n'
-            '• 💎 <b>VIP Benefits:</b>\n'
-            '• 👑 VIP Shop access\n'
-            '• 🎁 Daily bonus twice\n'
-            '• 🤝 <b>+2 Points</b> per referral'
+            '👍 <b>Get VIP</b>\n\n'
+            '{required} referrals are required for VIP!\n\n'
+            '👍 Your current referrals: <b>{current}/{required}</b>\n'
+            '👍 Missing: <b>{missing} more people</b> to invite!\n\n'
+            '• 👍 <b>VIP Benefits:</b>\n'
+            '• 👍 VIP Shop access\n'
+            '• 👍 Daily bonus twice a day\n'
+            '• 👍 <b>+2 Points</b> per referral'
         ),
         'vip_already': (
-            '👑 <b>You are already VIP!</b>\n\n'
-            '✅ VIP Shop access\n'
-            '✅ Double daily bonus\n'
-            '✅ +2 Points per referral'
+            '👑 <b>You are already a VIP member!</b>\n\n'
+            '✅ You have VIP Shop access\n'
+            '✅ You can claim the daily bonus twice a day\n'
+            '✅ You earn +2 Points per referral'
         ),
         'vip_granted': (
             '🎉 <b>Congrats! You are now VIP!</b>\n\n'
-            '👑 VIP Shop access unlocked\n'
-            '🎁 Double daily bonus\n'
-            '🤝 +2 Points per referral'
+            '👑 You now have VIP Shop access\n'
+            '🎁 You can claim the daily bonus twice a day\n'
+            '🤝 You\'ll earn +2 Points per referral'
         ),
-        'no_orders': '📦 <b>Your Order History</b>\n\nNo orders yet.',
+
+        'no_orders': '📦 <b>Your Order History</b>\n\nYou have no orders yet.',
+
         'referral_link': (
             '🤝 <b>Invite, Earn!</b>\n\n'
-            '👇 Share your personal link below!\n\n'
+            '👇 Invite your friends with your personal link below, earn <b>+1 Point</b> instantly for every new signup.\n\n'
             '📋 <b>Your Link:</b>\n'
             'https://t.me/{bot_username}?start={user_id}'
         ),
+
         'support_text': (
             '💬 <b>Support Center</b>\n\n'
-            '⚠️ <b>Don\'t disturb admin unnecessarily.</b>\n\n'
+            '⚠️ <b>Please don\'t disturb the admin unnecessarily.</b>\n'
+            'Only send a message for a real issue, faulty order, or emergency.\n'
+            'Check the Help menu first for FAQs.\n\n'
             '💎 <b>Your Balance:</b> {balance} Points\n\n'
             '━━━━━━━━━━━━━━━━━\n'
-            'Write your issue below.\n'
+            'Write your issue or request below.\n'
             'Type /iptal to cancel.'
         ),
         'support_cancelled': '❌ Cancelled.',
-        'support_sent': '✅ Message sent. We\'ll contact you soon.',
-        'no_active_raffle': '🎲 <b>Raffle</b>\n\n⚠️ No active raffle right now.\n\n<i>Stay tuned!</i>',
+        'support_sent': '✅ Your message has been sent. We\'ll contact you soon.',
+
+        'no_active_raffle': '🎲 <b>Raffle</b>\n\n⚠️ There is no active raffle right now.\n\n<i>Stay tuned for new raffles!</i>',
+
         'donate_text': (
             '⭐️ <b>Donate</b>\n\n'
-            'Support us with a star donation!\n\n'
-            'How many stars would you like to donate?'
+            'As Eren SMM TR, we work hard to always provide you better, faster, longer-lasting and more affordable service.\n\n'
+            'If you are happy with our services, you can support us with a star <b>donation</b>. Every contribution means a lot to us. Thank you! 🙏\n\n'
+            'How many stars would you like to <b>donate</b>?'
         ),
-        'donate_invoice_sent': '⭐️ A {stars}-star invoice sent to you privately.',
+        'donate_invoice_sent': '⭐️ A {stars}-star donation invoice has been sent to you in private. Please complete the payment.',
+
         'help_text': (
             '📖 <b>HELP CENTER</b> 📖\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '🛍 What is the Shop ⁉️\n'
-            'The bot\'s main sales area.\n\n'
+            'The bot\'s main sales area. You can buy products organized into categories here.\n\n'
             '━━━━━━━━━━━━━━━━━\n'
-            '👑 VIP Benefits ⁉️\n'
-            '👑 VIP Shop • 🎁 2x bonus • 🤝 +2 Points/referral\n\n'
+            '👑 VIP Shop & Membership ⁉️\n'
+            'VIP benefits: 👑 VIP Shop access • 🎁 2x daily bonus • 🤝 +2 Points per referral\n\n'
             '━━━━━━━━━━━━━━━━━\n'
             '⁉️ For Support: Use the <b>Support</b> button ⁉️'
         ),
+
         'coupon_maintenance': '🔧 Coupon System Under Maintenance',
         'generic_error': '⚠️ Something went wrong, please try again.',
         'lang_select': 'Lütfen dil tercihinizi yapın / Please select your language:',
     }
 }
 
-# ===== PREMIUM EMOJİ + HTML RENDER =====
+# ===== PREMIUM EMOJİ + HTML -> (text, entities) CONVERTER =====
+# Telegram API parse_mode və entities-i eyni anda qəbul etmir, ona görə
+# mövcud <b>/<i> HTML taglarını əl ilə entity-yə çeviririk, eyni zamanda
+# mətndəki unicode emoji-ləri premium custom_emoji entity-lərinə çeviririk.
+
 def render_with_premium_emoji(html_text):
+    """
+    HTML-bənzər mətni (yalnız <b> və <i> dəstəklənir) plain mətnə çevirir,
+    bold/italic/custom_emoji üçün MessageEntity siyahısı qaytarır.
+    Qaytarır: (plain_text, [MessageEntity, ...])
+    """
     entities = []
     plain_parts = []
-    plain_len = 0
+    plain_len = 0  # UTF-16 kod vahidi sayğacı (Telegram entity offset-ləri belə hesablanır)
 
     def utf16_len(s):
         return len(s.encode('utf-16-le')) // 2
 
+    # Tag yığını: (tag_adı, başlanğıc_offset)
     stack = []
     pos = 0
     tag_pattern = re.compile(r'</?(b|i)>')
 
     for m in tag_pattern.finditer(html_text):
+        # Tag-dan əvvəlki düz mətni emoji-ləri çevirərək əlavə et
         chunk = html_text[pos:m.start()]
         if chunk:
             plain_len = _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
         pos = m.end()
+
         tag_text = m.group(0)
         tag_name = m.group(1)
         if tag_text.startswith('</'):
+            # bağlanış tagı -> yığından uyğun açılışı tap
             for i in range(len(stack) - 1, -1, -1):
                 if stack[i][0] == tag_name:
                     _, start_offset = stack.pop(i)
@@ -487,15 +562,18 @@ def render_with_premium_emoji(html_text):
         else:
             stack.append((tag_name, plain_len))
 
+    # Qalan mətn
     chunk = html_text[pos:]
     if chunk:
         plain_len = _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
 
     plain_text = ''.join(plain_parts)
+    # Entity-ləri offset-ə görə sırala (Telegram bunu tələb edir)
     entities.sort(key=lambda e: e.offset)
     return plain_text, entities
 
 def _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len):
+    """Düz mətn parçasını emoji-lərə görə bölüb premium custom_emoji entity-ləri yaradır."""
     i = 0
     n = len(chunk)
     while i < n:
@@ -504,6 +582,8 @@ def _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
             elen = len(emoji_char)
             if chunk[i:i + elen] == emoji_char:
                 custom_id = PREMIUM_EMOJI_MAP[emoji_char]
+                # Telegram custom_emoji entity-si üçün placeholder mətn olaraq
+                # orijinal emoji-nin özünü saxlamaq tövsiyə olunur (placeholder kimi göstərir)
                 plain_parts.append(emoji_char)
                 elen_utf16 = utf16_len(emoji_char)
                 entities.append(MessageEntity(
@@ -524,6 +604,7 @@ def _append_chunk_with_emoji(chunk, plain_parts, entities, plain_len, utf16_len)
     return plain_len
 
 async def send_rich(bot, chat_id, html_text, reply_markup=None):
+    """parse_mode əvəzinə entities ilə premium-emoji-uyğun mesaj göndərir."""
     plain_text, entities = render_with_premium_emoji(html_text)
     return await bot.send_message(chat_id, plain_text, entities=entities, reply_markup=reply_markup)
 
@@ -707,6 +788,7 @@ def get_text(key, lang_or_user_id, **kwargs):
     return text.format(**kwargs) if kwargs else text
 
 async def safe_edit(query, text, reply_markup=None):
+    """Geriyə uyğunluq üçün saxlanılan ad - artıq premium emoji render edir."""
     await edit_rich(query, text, reply_markup)
 
 def get_products_by_category(category, vip_only=None):
@@ -745,6 +827,63 @@ def order_status_emoji(status):
         return '🔴'
     return '⚪'
 
+def main_menu_keyboard(user):
+    lang = get_user_language(user)
+    is_vip = bool(user and user.get('vip_status'))
+
+    if is_vip:
+        vip_row = [InlineKeyboardButton(
+            'VIP Üye' if lang == 'TR' else 'VIP Member',
+            callback_data='vip_already_info',
+            style='primary',
+            icon_custom_emoji_id=PREMIUM_EMOJI_MAP['👑']
+        )]
+    else:
+        vip_row = [InlineKeyboardButton(
+            get_text('vip_button', lang).replace('👑 ', ''),
+            callback_data='vip_purchase',
+            style='primary',
+            icon_custom_emoji_id=PREMIUM_EMOJI_MAP['👑']
+        )]
+
+    keyboard = [
+        [InlineKeyboardButton(get_text('balance', lang).replace('💎 ', ''), callback_data='balance',
+                               style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['💎']),
+         InlineKeyboardButton(get_text('profile', lang).replace('👤 ', ''), callback_data='profile',
+                               style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['👤'])],
+        [InlineKeyboardButton(get_text('shop', lang).replace('🛍️ ', ''), callback_data='shop',
+                               style='danger', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🛍']),
+         InlineKeyboardButton('VIP Mağaza' if lang == 'TR' else 'VIP Shop', callback_data='vip_shop',
+                               style='danger', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['👑'])],
+        vip_row,
+        [InlineKeyboardButton(get_text('daily_bonus', lang).replace('🎁 ', ''), callback_data='daily_bonus',
+                               style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['💎']),
+         InlineKeyboardButton(get_text('orders', lang).replace('📦 ', ''), callback_data='orders',
+                               style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['📦'])],
+        [InlineKeyboardButton(get_text('transfer', lang).replace('💰 ', ''), callback_data='transfer',
+                               style='danger', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['💰']),
+         InlineKeyboardButton(get_text('coupon', lang).replace('🎫 ', ''), callback_data='coupon',
+                               style='danger')],
+        [InlineKeyboardButton(get_text('referral', lang).replace('🤝 ', ''), callback_data='referral',
+                               style='primary', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🤝']),
+         InlineKeyboardButton(get_text('support', lang).replace('💬 ', ''), callback_data='support',
+                               style='primary', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['💬'])],
+        [InlineKeyboardButton(get_text('help', lang).replace('❓ ', ''), callback_data='help',
+                               style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['❓']),
+         InlineKeyboardButton(get_text('language', lang).replace('🌍 ', ''), callback_data='language',
+                               style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🌍'])],
+        [InlineKeyboardButton(get_text('raffle', lang).replace('🎲 ', ''), callback_data='raffle',
+                               style='primary', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🎲']),
+         InlineKeyboardButton(get_text('donate', lang).replace('⭐️ ', ''), callback_data='donate',
+                               style='primary', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['⭐'])]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def back_to_menu_markup(lang):
+    return InlineKeyboardMarkup([[InlineKeyboardButton(
+        get_text('back_to_menu', lang), callback_data='main_menu', style='primary'
+    )]])
+
 def is_valid_url(url):
     pattern = re.compile(
         r'^https?://'
@@ -755,70 +894,7 @@ def is_valid_url(url):
         r'(?:/?|[/?]\S+)$', re.IGNORECASE)
     return bool(pattern.match(url))
 
-# ===== RƏNGLİ MENÜ KLAVYE =====
-# Şəkildəki kimi: mavi, qırmızı, yaşıl düymələr
-# Telegram InlineKeyboard-da real rəng dəstəyi yoxdur,
-# amma düymə mətninə rəngli blok emoji əlavə etməklə vizual effekt yaradılır.
-
-def main_menu_keyboard(user):
-    lang = get_user_language(user)
-    is_vip = bool(user and user.get('vip_status'))
-
-    if is_vip:
-        vip_row = [InlineKeyboardButton(
-            '👑 VIP Üye ✅' if lang == 'TR' else '👑 VIP Member ✅',
-            callback_data='vip_already_info'
-        )]
-    else:
-        vip_row = [InlineKeyboardButton(get_text('vip_button', lang), callback_data='vip_purchase')]
-
-    keyboard = [
-        # Sıra 1 - Bakiye & Profil (Mavi tonda)
-        [
-            InlineKeyboardButton('💎 Bakiye: {bal} Puan'.format(bal=user.get('balance', 0)) if lang == 'TR' else '💎 Balance: {bal} Points'.format(bal=user.get('balance', 0)), callback_data='balance'),
-            InlineKeyboardButton('👤 Profilim' if lang == 'TR' else '👤 Profile', callback_data='profile'),
-        ],
-        # Sıra 2 - Mağaza & VIP Mağaza (Qırmızı tonda)
-        [
-            InlineKeyboardButton('🛍️ Mağaza' if lang == 'TR' else '🛍️ Shop', callback_data='shop'),
-            InlineKeyboardButton('👑 VIP Mağaza' if lang == 'TR' else '👑 VIP Shop', callback_data='vip_shop'),
-        ],
-        # Sıra 3 - VIP Ol (Tam en)
-        vip_row,
-        # Sıra 4 - Günlük Bonus & Siparişler (Yaşıl tonda)
-        [
-            InlineKeyboardButton('🎁 Günlük Bonus' if lang == 'TR' else '🎁 Daily Bonus', callback_data='daily_bonus'),
-            InlineKeyboardButton('📦 Siparişlerim' if lang == 'TR' else '📦 My Orders', callback_data='orders'),
-        ],
-        # Sıra 5 - Transfer & Kupon (Qırmızı tonda)
-        [
-            InlineKeyboardButton('💰 Puan Transferi' if lang == 'TR' else '💰 Points Transfer', callback_data='transfer'),
-            InlineKeyboardButton('🎫 Kupon Kodu' if lang == 'TR' else '🎫 Coupon Code', callback_data='coupon'),
-        ],
-        # Sıra 6 - Referans & Destek (Mavi tonda)
-        [
-            InlineKeyboardButton('🤝 Referans' if lang == 'TR' else '🤝 Referral', callback_data='referral'),
-            InlineKeyboardButton('💬 Destek' if lang == 'TR' else '💬 Support', callback_data='support'),
-        ],
-        # Sıra 7 - Yardım & Dil (Yaşıl tonda)
-        [
-            InlineKeyboardButton('❓ Yardım' if lang == 'TR' else '❓ Help', callback_data='help'),
-            InlineKeyboardButton('🌍 Dil' if lang == 'TR' else '🌍 Language', callback_data='language'),
-        ],
-        # Sıra 8 - Çekiliş & Bağış (Mavi tonda)
-        [
-            InlineKeyboardButton('🎲 Çekiliş' if lang == 'TR' else '🎲 Raffle', callback_data='raffle'),
-            InlineKeyboardButton('⭐️ Bağış Yap' if lang == 'TR' else '⭐️ Donate', callback_data='donate'),
-        ],
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-def back_to_menu_markup(lang):
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')
-    ]])
-
-# ===== CAPTCHA =====
+# ===== MAIN HANDLERS =====
 async def send_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
     a = random.randint(2, 15)
     b = random.randint(1, 10)
@@ -843,7 +919,7 @@ async def send_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         f"<b>{a}</b> + <b>{b}</b> = ?\n\n"
         "➕ Doğru cevabı seçin: ➕"
     )
-    btns = [InlineKeyboardButton(str(opt), callback_data=f'captcha_{opt}') for opt in options]
+    btns = [InlineKeyboardButton(str(opt), callback_data=f'captcha_{opt}', style='primary') for opt in options]
     rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
     keyboard = InlineKeyboardMarkup(rows)
 
@@ -852,13 +928,13 @@ async def send_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     elif update.callback_query:
         await edit_rich(update.callback_query, text, keyboard)
 
-# ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         tg_user = update.message.from_user
+        user_id = tg_user.id
     else:
         tg_user = update.callback_query.from_user
-    user_id = tg_user.id
+        user_id = tg_user.id
 
     existing_user = get_user(user_id)
     is_new_user = existing_user is None
@@ -866,6 +942,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_new_user:
         create_user(user_id, tg_user.username or f"User{user_id}")
         existing_user = get_user(user_id)
+
         if update.message and context.args:
             try:
                 referrer_id = int(context.args[0])
@@ -887,7 +964,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await edit_rich(update.callback_query, welcome_text, reply_markup)
 
-# ===== BUTTON CLICK =====
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -915,16 +991,14 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     back_markup = back_to_menu_markup(lang)
 
     data_preview = query.data or ''
-    will_show_alert = (data_preview in ('daily_bonus', 'vip_shop')) or \
-                      data_preview.startswith('buy_confirm_') or \
-                      data_preview.startswith('captcha_')
+    will_show_alert = (data_preview in ('daily_bonus', 'vip_shop')) or data_preview.startswith('buy_confirm_') or data_preview.startswith('captcha_')
     if not will_show_alert:
         await answer_once()
 
     try:
         data = query.data
 
-        # ===== CAPTCHA =====
+        # ===== GÜVENLİK DOĞRULAMASI =====
         if data.startswith('captcha_'):
             try:
                 guessed = int(data.split('_', 1)[1])
@@ -979,8 +1053,9 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            orders=order_count,
                            reg_date=user['registration_date'])
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(get_text('daily_bonus', lang), callback_data='daily_bonus')],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
+                [InlineKeyboardButton(get_text('daily_bonus', lang).replace('🎁 ', ''), callback_data='daily_bonus',
+                                       style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['💎'])],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
             ])
             await safe_edit(query, text, keyboard)
 
@@ -1019,6 +1094,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 put_conn(conn)
 
             await answer_once()
+
             new_balance = user['balance'] + 1
             if is_vip and max_per_day == 2:
                 text = get_text('daily_bonus_success_vip', lang, balance=new_balance, used=used_today)
@@ -1034,9 +1110,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ===== LANGUAGE =====
         elif data == 'language':
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton('🇹🇷 Türkçe', callback_data='lang_tr'),
-                 InlineKeyboardButton('🇬🇧 English', callback_data='lang_en')],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
+                [InlineKeyboardButton('Türkçe', callback_data='lang_tr', style='success',
+                                       icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🌍']),
+                 InlineKeyboardButton('English', callback_data='lang_en', style='success',
+                                       icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🌍'])],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
             ])
             await safe_edit(query, get_text('lang_select', lang), keyboard)
 
@@ -1056,31 +1134,38 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ===== SHOP =====
         elif data == 'shop':
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(get_text('tiktok_smm', lang), callback_data='shop_tiktok'),
-                 InlineKeyboardButton(get_text('telegram_smm', lang), callback_data='shop_telegram')],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
+                [InlineKeyboardButton(get_text('tiktok_smm', lang).replace('🎵 ', ''), callback_data='shop_tiktok',
+                                       style='danger', icon_custom_emoji_id=TIKTOK_PRODUCT_EMOJI_ID),
+                 InlineKeyboardButton(get_text('telegram_smm', lang).replace('📱 ', ''), callback_data='shop_telegram',
+                                       style='danger', icon_custom_emoji_id=TELEGRAM_PRODUCT_EMOJI_ID)],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
             ])
             await safe_edit(query, get_text('shop_welcome', lang), keyboard)
 
         elif data in ('shop_tiktok', 'shop_telegram'):
             category = 'TikTok' if data == 'shop_tiktok' else 'Telegram'
-            cat_emoji = '🎵' if category == 'TikTok' else '📱'
             products = get_products_by_category(category, vip_only=False)
+            cat_icon = TIKTOK_PRODUCT_EMOJI_ID if category == 'TikTok' else TELEGRAM_PRODUCT_EMOJI_ID
 
             if not products:
                 cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
                 text = get_text('category_empty', lang, category=cat_label)
-                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop')]])
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+                    get_text('back_to_menu', lang), callback_data='shop', style='primary'
+                )]])
                 await safe_edit(query, text, keyboard)
             else:
                 cat_label = get_text('tiktok_smm', lang) if category == 'TikTok' else get_text('telegram_smm', lang)
-                text = f"{cat_emoji} <b>{cat_label}</b>\n\nBir ürün seçin:\n"
+                text = f"🛍️ <b>{cat_label}</b>\n\nBir ürün seçin:\n"
                 rows = []
                 for p in products:
                     stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
                     text += f"\n<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n"
-                    rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
-                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop')])
+                    rows.append([InlineKeyboardButton(
+                        p['name'], callback_data=f"buy_{p['product_id']}",
+                        style='success', icon_custom_emoji_id=cat_icon
+                    )])
+                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='shop', style='primary')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
         # ===== VIP SHOP =====
@@ -1099,10 +1184,12 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows = []
                 for p in products:
                     stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
-                    cat_emoji = '🎵' if p['category'] == 'TikTok' else '📱'
-                    text += f"{cat_emoji} <b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n\n"
-                    rows.append([InlineKeyboardButton(f"🛒 {p['name']}", callback_data=f"buy_{p['product_id']}")])
-                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')])
+                    text += f"<b>{p['name']}</b>\n💵 Fiyat: {p['price']} Puan | 📦 Stok: {stock_text}\n\n"
+                    rows.append([InlineKeyboardButton(
+                        p['name'], callback_data=f"buy_{p['product_id']}",
+                        style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['👑']
+                    )])
+                rows.append([InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')])
                 await safe_edit(query, text, InlineKeyboardMarkup(rows))
 
         # ===== VIP PURCHASE =====
@@ -1189,20 +1276,21 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ===== DONATE =====
         elif data == 'donate':
+            star_icon = PREMIUM_EMOJI_MAP['⭐']
             buttons = [
-                [InlineKeyboardButton('⭐️ 5', callback_data='donate_5'),
-                 InlineKeyboardButton('⭐️ 10', callback_data='donate_10')],
-                [InlineKeyboardButton('⭐️ 15', callback_data='donate_15'),
-                 InlineKeyboardButton('⭐️ 20', callback_data='donate_20')],
-                [InlineKeyboardButton('⭐️ 25', callback_data='donate_25'),
-                 InlineKeyboardButton('⭐️ 30', callback_data='donate_30')],
-                [InlineKeyboardButton('⭐️ 35', callback_data='donate_35'),
-                 InlineKeyboardButton('⭐️ 40', callback_data='donate_40')],
-                [InlineKeyboardButton('⭐️ 45', callback_data='donate_45'),
-                 InlineKeyboardButton('⭐️ 50', callback_data='donate_50')],
-                [InlineKeyboardButton('⭐️ 75', callback_data='donate_75'),
-                 InlineKeyboardButton('⭐️ 100', callback_data='donate_100')],
-                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu')]
+                [InlineKeyboardButton('5', callback_data='donate_5', style='primary', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('10', callback_data='donate_10', style='primary', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('15', callback_data='donate_15', style='primary', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('20', callback_data='donate_20', style='primary', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('25', callback_data='donate_25', style='primary', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('30', callback_data='donate_30', style='primary', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('35', callback_data='donate_35', style='primary', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('40', callback_data='donate_40', style='primary', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('45', callback_data='donate_45', style='primary', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('50', callback_data='donate_50', style='primary', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton('75', callback_data='donate_75', style='primary', icon_custom_emoji_id=star_icon),
+                 InlineKeyboardButton('100', callback_data='donate_100', style='primary', icon_custom_emoji_id=star_icon)],
+                [InlineKeyboardButton(get_text('back_to_menu', lang), callback_data='main_menu', style='primary')]
             ]
             await safe_edit(query, get_text('donate_text', lang), InlineKeyboardMarkup(buttons))
 
@@ -1246,7 +1334,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['pending_product_id'] = None
             await start(update, context)
 
-        # ===== BUY - Məhsul Detay =====
+        # ===== BUY — Məhsul Detay Səhifəsi =====
         elif data.startswith('buy_') and not data.startswith('buy_confirm_') and not data.startswith('buy_cancel_'):
             product_id = int(data.split('_')[1])
             conn = get_conn()
@@ -1265,7 +1353,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             stock_text = 'Sınırsız' if product['stock'] >= 999999 else str(product['stock'])
-            cat_emoji = '🎵' if product['category'] == 'TikTok' else '📱'
 
             if product['category'] == 'TikTok':
                 back_cb = 'shop_tiktok'
@@ -1275,20 +1362,20 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 back_cb = 'shop'
 
             text = (
-                f"{cat_emoji} <b>{product['name']}</b>\n\n"
+                f"<b>{product['name']}</b>\n\n"
                 f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
                 f"📦 <b>Stok:</b> {stock_text}\n\n"
                 f"⁉️ Satın almak istiyorsunuz ⁉️"
             )
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton('✅ Evet', callback_data=f'buy_confirm_{product_id}'),
-                    InlineKeyboardButton('❌ Hayır', callback_data=back_cb)
+                    InlineKeyboardButton('Evet', callback_data=f'buy_confirm_{product_id}', style='success'),
+                    InlineKeyboardButton('Hayır', callback_data=back_cb, style='danger')
                 ]
             ])
             await safe_edit(query, text, keyboard)
 
-        # ===== BUY CONFIRM =====
+        # ===== BUY CONFIRM — Bakiye Yoxla, Link İstə =====
         elif data.startswith('buy_confirm_'):
             product_id = int(data.split('_')[2])
             conn = get_conn()
@@ -1309,7 +1396,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user['balance'] < product['price']:
                 needed = product['price']
                 text = (
-                    f"❌ <b>Yetersiz Bakiye!</b>\n\n"
+                    f"👎 <b>Yetersiz Bakiye!</b>\n\n"
                     f"💵 <b>{needed} Puana</b> ihtiyacınız var.\n"
                     f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>"
                 )
@@ -1321,17 +1408,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['pending_product_id'] = product_id
 
             text = (
-                f"🔗 <b>Sipariş Bağlantısını Girin</b>\n\n"
+                f"🔗 <b>Sipariş Etmek İstediğiniz Bağlantıyı Girin</b>\n\n"
                 f"🛍️ Ürün: <b>{product['name']}</b>\n"
                 f"💵 Fiyat: <b>{product['price']} Puan</b>\n\n"
                 f"Lütfen geçerli bir URL girin (https:// ile başlamalı).\n"
                 f"İptal için /iptal yazın."
             )
             await safe_edit(query, text, InlineKeyboardMarkup([
-                [InlineKeyboardButton('❌ İptal', callback_data='main_menu')]
+                [InlineKeyboardButton('İptal', callback_data='main_menu', style='danger')]
             ]))
 
-        # ===== ADMIN ORDER ACTIONS =====
+        # ===== ADMIN: Siparişi Onayla =====
         elif data.startswith('admin_approve_'):
             if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
@@ -1339,6 +1426,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order_id = int(data.split('_')[2])
             await _admin_approve_order(query, context, order_id, lang)
 
+        # ===== ADMIN: Siparişi Reddet =====
         elif data.startswith('admin_reject_'):
             if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
@@ -1346,6 +1434,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order_id = int(data.split('_')[2])
             await _admin_reject_order(query, context, order_id, lang)
 
+        # ===== ADMIN: Siparişi Tamamla =====
         elif data.startswith('admin_complete_'):
             if not is_admin(user_id):
                 await answer_once('❌ Yetkiniz yok!', show_alert=True)
@@ -1378,9 +1467,11 @@ async def _admin_approve_order(query, context, order_id, lang):
         if not order:
             await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
             return
+
         if order['status'] != 'Beklemede':
             await query.answer(f'⚠️ Sipariş zaten {order["status"]}!', show_alert=True)
             return
+
         c.execute("UPDATE orders SET status = 'Onaylandı' WHERE order_id = %s", (order_id,))
         conn.commit()
     except Exception as e:
@@ -1403,7 +1494,8 @@ async def _admin_approve_order(query, context, order_id, lang):
         f"📅 <b>Tarih:</b> {order['order_date']}"
     )
     complete_markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton('🏁 Siparişi Tamamla', callback_data=f'admin_complete_{order_id}')]
+        [InlineKeyboardButton('Siparişi Tamamla', callback_data=f'admin_complete_{order_id}',
+                               style='success', icon_custom_emoji_id=PREMIUM_EMOJI_MAP['🟢'])]
     ])
     try:
         plain_text, entities = render_with_premium_emoji(log_text)
@@ -1428,7 +1520,7 @@ async def _admin_approve_order(query, context, order_id, lang):
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
-            f"⏳ Siparişiniz işleme alındı."
+            f"⏳ Siparişiniz işleme alındı, yakında tamamlanacak."
         )
     except Exception as e:
         logger.error(f"user notify error: {e}")
@@ -1446,9 +1538,11 @@ async def _admin_reject_order(query, context, order_id, lang):
         if not order:
             await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
             return
+
         if order['status'] not in ('Beklemede', 'Onaylandı'):
             await query.answer(f'⚠️ Sipariş zaten {order["status"]}!', show_alert=True)
             return
+
         c.execute("UPDATE orders SET status = 'Reddedildi' WHERE order_id = %s", (order_id,))
         c.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s",
                   (order['product_price'], order['user_id']))
@@ -1493,7 +1587,7 @@ async def _admin_reject_order(query, context, order_id, lang):
             f"🔴 <b>Siparişiniz Reddedildi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
-            f"💵 <b>{order['product_price']} Puan</b> iade edildi."
+            f"💵 <b>{order['product_price']} Puan</b> hesabınıza iade edildi."
         )
     except Exception as e:
         logger.error(f"user notify error: {e}")
@@ -1511,9 +1605,11 @@ async def _admin_complete_order(query, context, order_id, lang):
         if not order:
             await query.answer('❌ Sipariş bulunamadı!', show_alert=True)
             return
+
         if order['status'] == 'Tamamlandı':
             await query.answer('✅ Sipariş zaten tamamlandı!', show_alert=True)
             return
+
         c.execute("UPDATE orders SET status = 'Tamamlandı' WHERE order_id = %s", (order_id,))
         conn.commit()
     except Exception as e:
@@ -1557,7 +1653,7 @@ async def _admin_complete_order(query, context, order_id, lang):
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {order['product_name']}\n"
             f"🔗 <b>Bağlantı:</b> {order['profile_link']}\n\n"
-            f"✅ Başarıyla teslim edildi. İyi kullanımlar!"
+            f"✅ Siparişiniz başarıyla teslim edilmiştir. İyi kullanımlar!"
         )
     except Exception as e:
         logger.error(f"user notify error: {e}")
@@ -1569,7 +1665,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     lang = get_user_language(user)
 
-    # ===== PROFİL LİNK =====
+    # ===== PROFİL LİNK BEKLEME (Sipariş akışı) =====
     if context.user_data.get('awaiting_profile_link'):
         if text == '/iptal':
             context.user_data['awaiting_profile_link'] = False
@@ -1612,7 +1708,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['pending_product_id'] = None
             await reply_rich(
                 update.message,
-                f"❌ <b>Yetersiz Bakiye!</b>\n\n"
+                f"👎 <b>Yetersiz Bakiye!</b>\n\n"
                 f"💵 <b>{product['price']} Puana</b> ihtiyacınız var.\n"
                 f"💎 Mevcut Bakiyeniz: <b>{user['balance']} Puan</b>"
             )
@@ -1644,21 +1740,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data['awaiting_profile_link'] = False
         context.user_data['pending_product_id'] = None
+
         new_balance = user['balance'] - product['price']
 
         await reply_rich(
             update.message,
-            f"✅ <b>Siparişiniz Alındı!</b>\n\n"
+            f"✅ <b>Siparişiniz Onaylandı!</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"🛍️ <b>Ürün:</b> {product['name']}\n"
             f"💵 <b>Fiyat:</b> {product['price']} Puan\n"
             f"🔗 <b>Bağlantı:</b> {profile_link}\n"
             f"💎 <b>Yeni Bakiye:</b> {new_balance} Puan\n\n"
-            f"🟡 <b>Siparişiniz Beklemede</b>"
+            f"⏳ <b>Siparişiniz Beklemede</b>"
         )
 
         log_text = (
-            f"🛒 <b>Yeni Sipariş</b>\n\n"
+            f"🛒 <b>Sipariş Geldi</b>\n\n"
             f"🆔 <b>Sipariş ID:</b> #{order_id}\n"
             f"👤 <b>Kullanıcı ID:</b> {user_id}\n"
             f"🛍️ <b>Ürün:</b> {product['name']}\n"
@@ -1668,8 +1765,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         log_markup = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton('✅ Onayla', callback_data=f'admin_approve_{order_id}'),
-                InlineKeyboardButton('❌ Reddet', callback_data=f'admin_reject_{order_id}')
+                InlineKeyboardButton('Onayla', callback_data=f'admin_approve_{order_id}', style='success'),
+                InlineKeyboardButton('Reddet', callback_data=f'admin_reject_{order_id}', style='danger')
             ]
         ])
         try:
@@ -1692,9 +1789,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 put_conn(conn2)
         except Exception as e:
             logger.error(f"log channel send error: {e}")
+
         return
 
-    # ===== TRANSFER =====
+    # ===== TRANSFER BEKLEME =====
     elif context.user_data.get('awaiting_transfer'):
         if text == '/iptal':
             context.user_data['awaiting_transfer'] = False
@@ -1761,12 +1859,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data['awaiting_transfer'] = False
             new_balance = user['balance'] - (amount + 1)
-            await reply_rich(update.message, get_text('transfer_success', lang,
-                amount=amount, receiver_id=receiver_id, new_balance=new_balance))
+            success_msg = get_text('transfer_success', lang, amount=amount, receiver_id=receiver_id, new_balance=new_balance)
+            await reply_rich(update.message, success_msg)
 
+            log_msg = f"💸 YENİ TRANSFER\n\n👤 Gönderen: {user_id}\n👤 Alan: {receiver_id}\n💎 Miktar: {amount}\n💰 Komisyon: 1\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             try:
-                await send_rich(context.bot, LOG_CHANNEL,
-                    f"💸 <b>Yeni Transfer</b>\n\n👤 Gönderen: {user_id}\n👤 Alan: {receiver_id}\n💎 Miktar: {amount}\n💰 Komisyon: 1\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+                await send_rich(context.bot, LOG_CHANNEL, log_msg)
             except Exception as e:
                 logger.error(f"log channel error: {e}")
 
@@ -1781,7 +1879,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await reply_rich(update.message, get_text('transfer_format_error', lang))
 
-    # ===== SUPPORT =====
+    # ===== SUPPORT BEKLEME =====
     elif context.user_data.get('awaiting_support'):
         if text == '/iptal':
             context.user_data['awaiting_support'] = False
@@ -1789,7 +1887,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         context.user_data['awaiting_support'] = False
-        support_log = f"💬 <b>Yeni Destek Mesajı</b>\n\n👤 Kullanıcı: {user_id}\n💬 Mesaj:\n{text}\n\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        support_log = f"💬 YENİ DESTEK MESAJI\n\n👤 Kullanıcı: {user_id}\n💬 Mesaj:\n{text}\n\n📅 Zaman: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         try:
             await send_rich(context.bot, LOG_CHANNEL, support_log)
         except Exception as e:
@@ -1806,11 +1904,11 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ Yetkiniz yok!')
         return
     if len(context.args) < 4:
-        await update.message.reply_text('📝 Kullanım: /urunekle "ad" kategori fiyat stok [vip]\nKategoriler: TikTok, Telegram')
+        await update.message.reply_text('📝 Kullanım: /urunekle "ad" kategori fiyat stok [vip]')
         return
     try:
         vip_only = False
-        args = list(context.args)
+        args = context.args
         if args[-1].lower() in ('vip', 'true', '1'):
             vip_only = True
             args = args[:-1]
@@ -1827,10 +1925,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = c.fetchone()[0]
             conn.commit()
             vip_tag = '👑 VIP' if vip_only else ''
-            await update.message.reply_text(
-                f'✅ Ürün eklendi!\n\nID: {product_id}\n📝 Ad: {name}\n'
-                f'📂 Kategori: {category}\n💰 Fiyat: {price}\n📦 Stok: {stock} {vip_tag}'
-            )
+            await update.message.reply_text(f'✅ Ürün eklendi!\n\nID: {product_id}\n📝 Ad: {name}\n📂 Kategori: {category}\n💰 Fiyat: {price}\n📦 Stok: {stock} {vip_tag}')
         except Exception as e:
             logger.error(f"add_product error: {e}")
             conn.rollback()
@@ -1854,7 +1949,7 @@ async def admin_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             c = conn.cursor(cursor_factory=RealDictCursor)
             c.execute('UPDATE products SET stock = %s WHERE product_id = %s', (new_stock, product_id))
-            c.execute('SELECT name FROM products WHERE product_id = %s', (product_id,))
+            c.execute('SELECT name, stock FROM products WHERE product_id = %s', (product_id,))
             product = c.fetchone()
             conn.commit()
             if product:
@@ -1877,7 +1972,7 @@ async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_conn()
     try:
         c = conn.cursor(cursor_factory=RealDictCursor)
-        c.execute('SELECT product_id, name, category, price, stock, vip_only FROM products ORDER BY product_id')
+        c.execute('SELECT product_id, name, category, price, stock, vip_only FROM products')
         products = c.fetchall()
     except Exception as e:
         logger.error(f"products error: {e}")
@@ -1891,7 +1986,7 @@ async def admin_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for p in products:
         vip_tag = '👑' if p['vip_only'] else ''
         stock_text = 'Sınırsız' if p['stock'] >= 999999 else str(p['stock'])
-        text += f"<b>ID:{p['product_id']}</b> | {p['name']} ({p['category']}) | 💰{p['price']} | 📦{stock_text} {vip_tag}\n"
+        text += f"<b>ID: {p['product_id']}</b> | {p['name']} ({p['category']}) | 💰{p['price']} | 📦{stock_text} {vip_tag}\n"
     await reply_rich(update.message, text)
 
 async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1910,9 +2005,7 @@ async def admin_give_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         update_balance(target_user_id, points)
         user_after = get_user(target_user_id)
-        await update.message.reply_text(
-            f'✅ {points} puan verildi!\n\n👤 ID: {target_user_id}\n💎 Yeni Bakiye: {user_after["balance"]}'
-        )
+        await update.message.reply_text(f'✅ {points} puan verildi!\n\n👤 ID: {target_user_id}\n💎 Yeni Bakiye: {user_after["balance"]}')
     except Exception as e:
         await update.message.reply_text(f'❌ Hata: {str(e)}')
 
@@ -1931,9 +2024,7 @@ async def admin_set_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c = conn.cursor()
             c.execute('UPDATE users SET vip_status = %s WHERE user_id = %s', (status, target_user_id))
             conn.commit()
-            await update.message.reply_text(
-                f'✅ Kullanıcı {target_user_id} VIP: {"AÇIK 👑" if status else "KAPALI"}'
-            )
+            await update.message.reply_text(f'✅ Kullanıcı {target_user_id} VIP durumu: {"AÇIK" if status else "KAPALI"}')
         except Exception as e:
             logger.error(f"admin_set_vip error: {e}")
             conn.rollback()
@@ -1967,7 +2058,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'👥 <b>Toplam Kullanıcı:</b> {total_users}\n'
             f'👑 <b>VIP Kullanıcı:</b> {vip_users}\n'
             f'📦 <b>Toplam Sipariş:</b> {total_orders}\n'
-            f'🟡 <b>Bekleyen Sipariş:</b> {pending_orders}\n'
+            f'⏳ <b>Bekleyen Sipariş:</b> {pending_orders}\n'
             f'💎 <b>Toplam Bakiye:</b> {total_balance}\n'
             f'🛍️ <b>Toplam Ürün:</b> {total_products}\n'
             f'📅 <b>Tarih:</b> {datetime.now().strftime("%Y-%m-%d %H:%M")}'
@@ -2012,6 +2103,7 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await reply_rich(update.message, text)
 
+
 async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text('❌ Bu komut yalnızca ana admin tarafından kullanılabilir!')
@@ -2035,6 +2127,9 @@ async def cmd_yetki(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await reply_rich(
                 update.message,
                 f"✅ <b>{target_id}</b> ID'li kullanıcıya yetki verildi!\n\n"
+                f"Bu kişi artık:\n"
+                f"• Log kanalında siparişleri onaylayabilir/reddedebilir\n"
+                f"• /bakiyeartir komutuyla puan ekleyebilir\n\n"
                 f"Yetkiyi kaldırmak için: /yetkikal {target_id}"
             )
         except Exception as e:
@@ -2098,6 +2193,7 @@ async def cmd_yetkiler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"🔹 <b>{a['admin_id']}</b> — {a['added_date']}\n"
     text += f'\n🔸 <b>Ana Admin:</b> {ADMIN_ID}'
     await reply_rich(update.message, text)
+
 
 # ===== MAIN =====
 def main():
